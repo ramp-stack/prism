@@ -1,0 +1,10 @@
+[package]
+name = "prism"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyanymap = "1.0.2"
+downcast-rs = "2.0.2"
+wgpu_canvas = {version="5.0.3", default-features = false}
+prism_proc = "0.1.0" 

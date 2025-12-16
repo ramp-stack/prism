@@ -1,0 +1,16 @@
+[package]
+name = "prism_proc"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+description = "Proc macro for Prism"
+documentation = "https://docs.rs/prism_proc"
+repository = "https://github.com/ramp-stack/prism"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0.94"
+quote = "1.0.40"
+syn = "2.0.100"
