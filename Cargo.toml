@@ -2,7 +2,6 @@
 name = "prism2"
 version = "0.1.0"
 edition = "2024"
-edition = "2021"
 license = "BSD-3-Clause"
 repository = "https://github.com/ramp-stack/prism.git"
 description = "A GUI abstraction library for building UI kits"
