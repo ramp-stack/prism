@@ -1,6 +1,6 @@
 [package]
 name = "prism2"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "BSD-3-Clause"
 repository = "https://github.com/ramp-stack/prism.git"
@@ -11,5 +11,6 @@ documentation = "https://docs.rs/prism2"
 [dependencies]
 anyanymap = "1.0.2"
 downcast-rs = "2.0.2"
-wgpu_canvas = {version="5.0.3", default-features = false}
+wgpu_canvas = {version="5.0.4", default-features = false}
+#wgpu_canvas = {path="../wgpu_canvas", default-features = false}
 prism_proc = "0.1.0" 
