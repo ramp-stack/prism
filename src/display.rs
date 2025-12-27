@@ -1,6 +1,7 @@
-use crate::drawable::{Drawable};
+use crate::drawable::{Drawable, Component};
 use crate::event::{OnEvent};
-use crate::layout::{Layout};
+use crate::layout::{Layout, Stack};
+use std::collections::HashMap;
 
 /// A container pairing a layout with a drawable element.
 #[derive(Debug)]
@@ -20,7 +21,7 @@ impl<L: Layout + 'static, D: Drawable + 'static> Component for Bin<L, D> {
     fn request_size(&self, children: Vec<crate::layout::SizeRequest>) -> crate::layout::SizeRequest {
         crate::layout::Layout::request_size(&self.0, children)
     }
-    fn build(&mut self, size: (f32, f32), children: Vec<crate::layout::SizeRequest>) -> Vec<crate::layout::Area> {
+    fn build(&self, size: (f32, f32), children: Vec<crate::layout::SizeRequest>) -> Vec<crate::layout::Area> {
         crate::layout::Layout::build(&self.0, size, children)
     }
 }
@@ -44,14 +45,12 @@ impl<D: Drawable + 'static> Component for Opt<D> {
         &mut self.1 as &mut dyn crate::drawable::Drawable,
     ]}
 
-    fn children(&self) -> Vec<&dyn Drawable> {vec![
-        &self.1 as &dyn crate::drawable::Drawable,
-    ]}
+    fn children(&self) -> Vec<&dyn Drawable> {vec![&self.1 as &dyn crate::drawable::Drawable]}
 
     fn request_size(&self, children: Vec<crate::layout::SizeRequest>) -> crate::layout::SizeRequest {
         crate::layout::Layout::request_size(&self.0, children)
     }
-    fn build(&mut self, size: (f32, f32), children: Vec<crate::layout::SizeRequest>) -> Vec<crate::layout::Area> {
+    fn build(&self, size: (f32, f32), children: Vec<crate::layout::SizeRequest>) -> Vec<crate::layout::Area> {
         crate::layout::Layout::build(&self.0, size, children)
     }
 }
@@ -101,7 +100,7 @@ impl<L: Drawable + 'static, R: Drawable + 'static> Component for EitherOr<L, R> 
     fn request_size(&self, children: Vec<crate::layout::SizeRequest>) -> crate::layout::SizeRequest {
         crate::layout::Layout::request_size(&self.0, children)
     }
-    fn build(&mut self, size: (f32, f32), children: Vec<crate::layout::SizeRequest>) -> Vec<crate::layout::Area> {
+    fn build(&self, size: (f32, f32), children: Vec<crate::layout::SizeRequest>) -> Vec<crate::layout::Area> {
         crate::layout::Layout::build(&self.0, size, children)
     }
 }
@@ -122,7 +121,7 @@ impl<L: Drawable + 'static, R: Drawable + 'static> EitherOr<L, R> {
 
 /// A container that holds multiple drawables but displays only one at a time, allowing toggling between them.
 #[derive(Debug)]
-pub struct Enum(Stack, HashMap<String, Opt<Box<dyn Drawable>>>);
+pub struct Enum(Stack, HashMap<String, Opt<Box<dyn Drawable>>>, String);
 impl OnEvent for Enum {}
 
 impl Component for Enum {
@@ -137,7 +136,7 @@ impl Component for Enum {
     fn request_size(&self, children: Vec<crate::layout::SizeRequest>) -> crate::layout::SizeRequest {
         crate::layout::Layout::request_size(&self.0, children)
     }
-    fn build(&mut self, size: (f32, f32), children: Vec<crate::layout::SizeRequest>) -> Vec<crate::layout::Area> {
+    fn build(&self, size: (f32, f32), children: Vec<crate::layout::SizeRequest>) -> Vec<crate::layout::Area> {
         crate::layout::Layout::build(&self.0, size, children)
     }
 }
@@ -145,12 +144,12 @@ impl Component for Enum {
 impl Enum {
     /// Creates a new [`Enum`] component with the given drawable items.
     /// The first item will be visible by default.
-    pub fn new(items: Vec<(&str, Box<dyn Drawable>)>, start: &str) -> Self {
+    pub fn new(items: Vec<(String, Box<dyn Drawable>)>, start: String) -> Self {
         let items = items.into_iter().map(|(name, item)| {
             (name.to_string(), Opt::new(item, name == start))
         }).collect::<Vec<(String, Opt<Box<dyn Drawable>>)>>();
 
-        Enum(Stack::default(), items.into_iter().collect())
+        Enum(Stack::default(), items.into_iter().collect(), start.to_string())
     }
 
     /// Displays only the item matching the given name and hides all others. 
@@ -161,9 +160,15 @@ impl Enum {
             false => self.1.keys().next().unwrap().clone()
         };
 
+        self.2 = key.to_string();
+
         for (k, v) in self.1.iter_mut() {
             v.display(*k == key);
         }
     }
 
+    pub fn current(&self) -> String { self.2.to_string() }
+    pub fn drawable(&mut self) -> &mut Opt<Box<dyn Drawable>> { 
+        self.1.get_mut(&self.2).unwrap() 
+    }
 }

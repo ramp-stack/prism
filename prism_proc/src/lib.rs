@@ -165,7 +165,7 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                         children.remove(0)
                     }
                     fn build(&self, size: (f32, f32), children: Vec<prism::layout::SizeRequest>) -> Vec<prism::layout::Area> {
-                        vec![prism::layout::Area{offset: (0, 0), size}]
+                        vec![prism::layout::Area{offset: (0.0, 0.0), size}]
                     }
                 }
             })

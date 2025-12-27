@@ -7,6 +7,8 @@ use crate::Context;
 
 use wgpu_canvas::{Image, Shape, Text, Area as CanvasArea, Item as CanvasItem};
 
+use downcast_rs::{Downcast, impl_downcast};
+
 pub use prism_proc::Component;
 
 #[derive(Default, Debug, Clone)]
@@ -24,7 +26,7 @@ pub type Size = (f32, f32);
 /// The `Drawable` trait is implemented by all visual elements
 /// such as shapes, text, and images.
 #[allow(private_bounds)]
-pub trait Drawable: Debug + Any {
+pub trait Drawable: Debug + Any + Downcast {
     fn request_size(&self) -> RequestTree;
 
     fn build(&self, size: Size, request: RequestTree) -> SizedTree {
@@ -36,6 +38,8 @@ pub trait Drawable: Debug + Any {
 
     fn event(&mut self, _ctx: &mut Context, _sized: &SizedTree, _event: Box<dyn Event>) {}
 }
+
+impl_downcast!(Drawable);
 
 impl Drawable for Box<dyn Drawable> {
     fn request_size(&self) -> RequestTree {Drawable::request_size(&**self)}
@@ -53,12 +57,33 @@ impl Drawable for Box<dyn Drawable> {
     }
 }
 
+impl<D: Drawable + Debug + Any> Drawable for Option<D> {
+    fn request_size(&self) -> RequestTree {
+        self.as_ref().map(|d| d.request_size()).unwrap_or_default()
+    }
+
+    fn build(&self, size: Size, request: RequestTree) -> SizedTree {
+        self.as_ref().map(|d| d.build(size, request)).unwrap_or_default()
+    }
+
+    fn draw(&self, sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
+        self.as_ref().map(|d| d.draw(sized, offset, bound)).unwrap_or_default()
+    }
+
+    fn name(&self) -> String { self.as_ref().map(|d| d.name()).unwrap_or("None".to_string()) }
+
+    fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {
+        if let Some(d) = self { d.event(ctx, sized, event); }
+    }
+}
+
 impl Drawable for Text {
     fn request_size(&self) -> RequestTree {
         RequestTree(SizeRequest::fixed(self.size()), vec![])
     }
 
-    fn draw(&self, _sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
+    fn draw(&self, sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
+        println!("size: {:?}", sized.0);
         vec![(CanvasArea{offset, bounds: Some(bound)}, CanvasItem::Text(self.clone()))]
     }
 }
@@ -88,7 +113,7 @@ impl Drawable for Image {
 /// `Component` represents higher-level UI building blocks. 
 /// Unlike simple `Drawable`s, components can contain other 
 /// drawables and define their own layout, rendering, and event handling.
-pub trait Component: Debug {
+pub trait Component: Debug where Self: 'static {
     /// Returns mutable reference to child drawables.
     fn children_mut(&mut self) -> Vec<&mut dyn Drawable>;
     /// Returns reference to child drawables.
@@ -101,7 +126,7 @@ pub trait Component: Debug {
 }
 //TODO: could relpaces request_size and build with a layout getter and run Layout methods directly
 
-impl<C: Component + ?Sized + 'static + OnEvent> Drawable for C {
+impl<C: Component + 'static + OnEvent> Drawable for C {
     fn request_size(&self) -> RequestTree {
         let requests = self.children().into_iter().map(Drawable::request_size).collect::<Vec<_>>();
         let info = requests.iter().map(|i| i.0).collect::<Vec<_>>();

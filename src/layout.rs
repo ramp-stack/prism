@@ -342,27 +342,28 @@ impl Layout for Row {
 /// let layout = Column::new(24.0, Offset::Center, Size::Fit, Padding::new(8.0));
 ///```
 #[derive(Debug, Default)]
-pub struct Column(f32, Offset, Size, Padding);
+pub struct Column(f32, Offset, Size, Padding, Option<Arc<Mutex<f32>>>);
 
 impl Column {
-    pub fn new(spacing: f32, offset: Offset, size: Size, padding: Padding) -> Self {
-        Column(spacing, offset, size, padding)
+    pub fn new(spacing: f32, offset: Offset, size: Size, padding: Padding, scrollable: bool) -> Self {
+        Column(spacing, offset, size, padding, scrollable.then_some(Arc::new(Mutex::new(0.0))))
     }
 
     pub fn center(spacing: f32) -> Self {
-        Column(spacing, Offset::Center, Size::Fit, Padding::default())
+        Column(spacing, Offset::Center, Size::Fill, Padding::default(), None)
     }
 
     pub fn start(spacing: f32) -> Self {
-        Column(spacing, Offset::Start, Size::Fit, Padding::default())
+        Column(spacing, Offset::Start, Size::Fit, Padding::default(), None)
     }
 
     pub fn end(spacing: f32) -> Self {
-        Column(spacing, Offset::End, Size::Fit, Padding::default())
+        Column(spacing, Offset::End, Size::Fit, Padding::default(), None)
     }
 
-
     pub fn padding(&mut self) -> &mut Padding {&mut self.3}
+    pub fn adjust_scroll(&mut self, delta: f32) { if let Some(s) = &mut self.4 { **s.lock().as_mut().unwrap() += delta; } }
+    pub fn set_scroll(&mut self, val: f32) { self.4 = Some(Arc::new(Mutex::new(val))); }
 }
 
 impl Layout for Column {
@@ -373,18 +374,29 @@ impl Layout for Column {
         let spacing = self.0*(heights.len()-1) as f32;
         let width = self.2.get(widths, Size::max);
         let height = Size::add(heights);
-        self.3.adjust_request(SizeRequest::new(width.0, height.0, width.1, height.1).add_height(spacing))
+        match self.4.is_some() {
+            true => self.3.adjust_request(SizeRequest::new(0.0, 0.0, width.1, height.1).add_height(spacing)),
+            false => self.3.adjust_request(SizeRequest::new(width.0, height.0, width.1, height.1).add_height(spacing)),
+        }
     }
 
     fn build(&self, col_size: (f32, f32), children: Vec<SizeRequest>) -> Vec<Area> {
         let col_size = self.3.adjust_size(col_size);
-
+        println!("SIZE {col_size:?} with count {:?}", children.len());
         let heights = UniformExpand::get(children.iter().map(|i| (i.min_height(), i.max_height())).collect::<Vec<_>>(), col_size.1, self.0);
-
         let mut offset = 0.0;
-        children.into_iter().zip(heights).map(|(i, height)| {
+        children.clone().into_iter().zip(heights).map(|(i, height)| {
             let size = i.get((col_size.0, height));
-            let off = self.3.adjust_offset((self.1.get(col_size.0, size.0), offset));
+            let mut off = self.3.adjust_offset((self.1.get(col_size.0, size.0), offset));
+            if let Some(sv) = &self.4 {
+                let children_height = children.iter().map(|i| i.min_height()).sum::<f32>();
+                let content_height = children_height + (self.0 * children.len().saturating_sub(1) as f32);
+                let max_scroll = (content_height - col_size.1).max(0.0);
+
+                let mut scroll_val = sv.lock().unwrap();
+                *scroll_val = scroll_val.clamp(0.0, max_scroll);
+                off.1 -= *scroll_val;
+            }
             offset += size.1+self.0;
             Area{offset: off, size}
         }).collect()
@@ -459,6 +471,18 @@ pub struct Wrap(pub f32, pub f32, pub Offset, pub Offset, pub Padding, Arc<Mutex
 
 impl Wrap {
     pub fn new(w_spacing: f32, h_spacing: f32) -> Self {
+        Wrap(w_spacing, h_spacing, Offset::Center, Offset::Center, Padding::default(), Arc::new(Mutex::new(0.0)))
+    }
+
+    pub fn start(w_spacing: f32, h_spacing: f32) -> Self {
+        Wrap(w_spacing, h_spacing, Offset::Start, Offset::Center, Padding::default(), Arc::new(Mutex::new(0.0)))
+    }
+
+    pub fn end(w_spacing: f32, h_spacing: f32) -> Self {
+        Wrap(w_spacing, h_spacing, Offset::End, Offset::Center, Padding::default(), Arc::new(Mutex::new(0.0)))
+    }
+
+    pub fn center(w_spacing: f32, h_spacing: f32) -> Self {
         Wrap(w_spacing, h_spacing, Offset::Center, Offset::Center, Padding::default(), Arc::new(Mutex::new(0.0)))
     }
 }
@@ -536,126 +560,4 @@ impl Layout for Wrap {
 pub enum ScrollAnchor {
     Start,
     End,
-}
-
-/// Defines the direction of the scrolling.
-#[derive(Debug, Clone, Copy)]
-pub enum ScrollDirection {
-    Horizontal,
-    Vertical
-}
-
-/// Scrollable layout of items.
-#[derive(Debug)]
-pub struct Scroll {
-    offset_x: Offset,
-    offset_y: Offset,
-    size_x: Size,
-    size_y: Size,
-    padding: Padding,
-    adjustment: Arc<Mutex<f32>>,
-    anchor: ScrollAnchor,
-    direction: ScrollDirection
-}
-
-impl Default for Scroll {
-    fn default() -> Self {
-        Scroll::new(Offset::Start, Offset::Start, Size::Fit, Size::Fit, Padding::default(), ScrollAnchor::Start, ScrollDirection::Vertical)
-    }
-}
-
-impl Scroll {
-    pub fn new(offset_x: Offset, offset_y: Offset, size_x: Size, size_y: Size, padding: Padding, anchor: ScrollAnchor, direction: ScrollDirection) -> Self {
-        Scroll {
-            offset_x,
-            offset_y,
-            size_x,
-            size_y,
-            padding,
-            adjustment: Arc::new(Mutex::new(0.0)),
-            anchor,
-            direction,
-        }
-    }
-
-    pub fn vertical(offset_x: Offset, offset_y: Offset, size_x: Size, size_y: Size, padding: Padding) -> Self {
-        Scroll::new(offset_x, offset_y, size_x, size_y, padding, ScrollAnchor::Start, ScrollDirection::Vertical)
-    }
-
-    pub fn horizontal(offset_x: Offset, offset_y: Offset, size_x: Size, size_y: Size, padding: Padding) -> Self {
-        Scroll::new(offset_x, offset_y, size_x, size_y, padding, ScrollAnchor::Start, ScrollDirection::Horizontal)
-    }
-
-    pub fn adjust_scroll(&mut self, delta: f32) { 
-        let mut guard = self.adjustment.lock().unwrap();
-        match self.anchor {
-            ScrollAnchor::Start => *guard += delta,
-            ScrollAnchor::End => *guard -= delta,
-        }
-    }
-
-    pub fn set_scroll(&mut self, val: f32) { 
-        *self.adjustment.lock().unwrap() = val;
-    }
-
-    pub fn offset(&mut self) -> &mut Offset { 
-        match self.direction {
-            ScrollDirection::Vertical => &mut self.offset_y,
-            ScrollDirection::Horizontal => &mut self.offset_x,
-        }
-    }
-}
-
-impl Layout for Scroll {
-    fn request_size(&self, children: Vec<SizeRequest>) -> SizeRequest {
-        let (widths, heights): (Vec<_>, Vec<_>) = children.into_iter().map(|r|
-            ((r.min_width(), r.max_width()), (r.min_height(), r.max_height()))
-        ).unzip();
-
-        let width = self.size_x.get(widths, Size::max);
-        let height = self.size_y.get(heights, Size::max);
-        
-        self.padding.adjust_request(SizeRequest::new(width.0, height.0, width.1, height.1))
-    }
-
-    fn build(&self, scroll_size: (f32, f32), children: Vec<SizeRequest>) -> Vec<Area> {
-        match self.direction {
-            ScrollDirection::Vertical => {
-                let scroll_size = self.padding.adjust_size(scroll_size);
-                let children_height: f32 = children.iter().map(|i| i.min_height()).sum();
-                let max_scroll = (children_height - scroll_size.1).max(0.0);
-
-                let mut scroll_val = self.adjustment.lock().unwrap();
-                *scroll_val = scroll_val.clamp(0.0, max_scroll);
-
-                children.into_iter().map(|i| {
-                    let size = i.get(scroll_size);
-                    let y_offset = match self.anchor {
-                        ScrollAnchor::Start => self.offset_y.get(scroll_size.1, size.1)-*scroll_val,
-                        ScrollAnchor::End => scroll_size.1 - children_height + *scroll_val,
-                    };
-                    let offset = (self.offset_x.get(scroll_size.0, size.0), y_offset);
-                    Area {offset: self.padding.adjust_offset(offset), size }
-                }).collect()
-            }
-            ScrollDirection::Horizontal => {
-                let scroll_size = self.padding.adjust_size(scroll_size);
-                let children_width: f32 = children.iter().map(|i| i.min_width()).sum();
-                let max_scroll = (children_width - scroll_size.0).max(0.0);
-
-                let mut scroll_val = self.adjustment.lock().unwrap();
-                *scroll_val = scroll_val.clamp(0.0, max_scroll);
-
-                children.into_iter().map(|i| {
-                    let size = i.get(scroll_size);
-                    let x_offset = match self.anchor {
-                        ScrollAnchor::Start => self.offset_x.get(scroll_size.0, size.0) - *scroll_val,
-                        ScrollAnchor::End => scroll_size.0 - children_width + *scroll_val,
-                    };
-                    let offset = (x_offset, self.offset_y.get(scroll_size.1, size.1));
-                    Area {offset: self.padding.adjust_offset(offset), size }
-                }).collect()
-            }
-        }
-    }
 }

@@ -135,9 +135,9 @@ impl Event for Button {
 }
 
 /// Events emitted by the [`Selectable`](crate::emitters::Selectable) emmiter object.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum Selectable {
-    Pressed(u64, u64),
+    Pressed(String, String),
     Selected(bool)
 }
 
@@ -172,6 +172,20 @@ impl Event for TextInput {
         children.iter().map(|_| Some(self.clone() as Box<dyn Event>)).collect()
     }
 }
+
+#[derive(Debug, Clone)]
+pub enum NumericalInput {
+    Delete,
+    Digit(char),
+    Char(char)
+}
+
+impl Event for NumericalInput {
+    fn pass(self: Box<Self>, _ctx: &mut Context, children: &[Area]) -> Vec<Option<Box<dyn Event>>> {
+        children.iter().map(|_| Some(self.clone() as Box<dyn Event>)).collect()
+    }
+}
+
 
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
