@@ -17,10 +17,12 @@ pub enum Request {
     Service(String, String)
 }
 
+#[derive(Debug)]
 pub struct FrameSettings {
 
 }
 
+#[derive(Debug)]
 pub enum Hardware {
     CameraStart,
     CameraFrame(FrameSettings),

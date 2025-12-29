@@ -354,54 +354,64 @@ impl Column {
     }
 
     pub fn start(spacing: f32) -> Self {
-        Column(spacing, Offset::Start, Size::Fit, Padding::default(), None)
+        Column(spacing, Offset::Start, Size::Fill, Padding::default(), None)
     }
 
     pub fn end(spacing: f32) -> Self {
-        Column(spacing, Offset::End, Size::Fit, Padding::default(), None)
+        Column(spacing, Offset::End, Size::Fill, Padding::default(), None)
     }
 
     pub fn padding(&mut self) -> &mut Padding {&mut self.3}
-    pub fn adjust_scroll(&mut self, delta: f32) { if let Some(s) = &mut self.4 { **s.lock().as_mut().unwrap() += delta; } }
-    pub fn set_scroll(&mut self, val: f32) { self.4 = Some(Arc::new(Mutex::new(val))); }
+    pub fn adjust_scroll(&mut self, delta: f32) { if let Some(s) = &mut self.4 { **s.lock().as_mut().unwrap() += delta; }}
+    pub fn set_scroll(&mut self, val: f32) { if let Some(s) = &mut self.4 { **s.lock().as_mut().unwrap() = val; } }
 }
 
 impl Layout for Column {
     fn request_size(&self, children: Vec<SizeRequest>) -> SizeRequest {
+        if children.is_empty() { return SizeRequest::default() };
         let (widths, heights): (Vec<_>, Vec<_>) = children.into_iter().map(|i|
             ((i.min_width(), i.max_width()), (i.min_height(), i.max_height()))
         ).unzip();
         let spacing = self.0*(heights.len()-1) as f32;
         let width = self.2.get(widths, Size::max);
-        let height = Size::add(heights);
-        match self.4.is_some() {
-            true => self.3.adjust_request(SizeRequest::new(0.0, 0.0, width.1, height.1).add_height(spacing)),
-            false => self.3.adjust_request(SizeRequest::new(width.0, height.0, width.1, height.1).add_height(spacing)),
-        }
+        let height = Size::add(heights.clone());
+        let minimum = if self.4.is_some() {(0.0, 0.0)} else {(width.0, height.0)};
+        self.3.adjust_request(SizeRequest::new(minimum.0, minimum.1, width.1, height.1).add_height(spacing))
     }
 
     fn build(&self, col_size: (f32, f32), children: Vec<SizeRequest>) -> Vec<Area> {
-        let col_size = self.3.adjust_size(col_size);
-        println!("SIZE {col_size:?} with count {:?}", children.len());
-        let heights = UniformExpand::get(children.iter().map(|i| (i.min_height(), i.max_height())).collect::<Vec<_>>(), col_size.1, self.0);
-        let mut offset = 0.0;
-        children.clone().into_iter().zip(heights).map(|(i, height)| {
-            let size = i.get((col_size.0, height));
-            let mut off = self.3.adjust_offset((self.1.get(col_size.0, size.0), offset));
-            if let Some(sv) = &self.4 {
-                let children_height = children.iter().map(|i| i.min_height()).sum::<f32>();
-                let content_height = children_height + (self.0 * children.len().saturating_sub(1) as f32);
-                let max_scroll = (content_height - col_size.1).max(0.0);
-
-                let mut scroll_val = sv.lock().unwrap();
-                *scroll_val = scroll_val.clamp(0.0, max_scroll);
-                off.1 -= *scroll_val;
-            }
-            offset += size.1+self.0;
-            Area{offset: off, size}
-        }).collect()
+        if self.4.is_some() {
+            let col_size = self.3.adjust_size(col_size);
+            let heights = UniformExpand::get(children.iter().map(|i| (i.min_height(), i.max_height())).collect::<Vec<_>>(), col_size.1, self.0);
+            let mut offset = 0.0;
+            let children_height = children.iter().map(|i| i.min_height()).sum::<f32>();
+            let content_height = children_height + (self.0 * children.len().saturating_sub(1) as f32);
+            let max_scroll = (content_height - col_size.1).max(0.0);
+            children.clone().into_iter().zip(heights).map(|(i, height)| {
+                let size = i.get((col_size.0, height));
+                let mut off = self.3.adjust_offset((self.1.get(col_size.0, size.0), offset));
+                if let Some(sv) = &self.4 {
+                    let mut scroll_val = sv.lock().unwrap();
+                    *scroll_val = scroll_val.clamp(0.0, max_scroll);
+                    off.1 -= *scroll_val;
+                }
+                offset += size.1+self.0;
+                Area{offset: off, size}
+            }).collect()
+        } else {
+            let col_size = self.3.adjust_size(col_size);
+            let heights = UniformExpand::get(children.iter().map(|i| (i.min_height(), i.max_height())).collect::<Vec<_>>(), col_size.1, self.0);
+            let mut offset = 0.0;
+            children.into_iter().zip(heights).map(|(i, height)| {
+                let size = i.get((col_size.0, height));
+                let off = self.3.adjust_offset((self.1.get(col_size.0, size.0), offset));
+                offset += size.1+self.0;
+                Area{offset: off, size}
+            }).collect()
+        }
     }
 }
+
 
 /// Items stacked on top of each other
 ///
