@@ -342,27 +342,36 @@ impl Layout for Row {
 /// let layout = Column::new(24.0, Offset::Center, Size::Fit, Padding::new(8.0));
 ///```
 #[derive(Debug, Default)]
-pub struct Column(f32, Offset, Size, Padding, Option<Arc<Mutex<f32>>>);
+pub struct Column(f32, Offset, Size, Padding, Option<Arc<Mutex<f32>>>, ScrollAnchor);
 
 impl Column {
-    pub fn new(spacing: f32, offset: Offset, size: Size, padding: Padding, scrollable: bool) -> Self {
-        Column(spacing, offset, size, padding, scrollable.then_some(Arc::new(Mutex::new(0.0))))
+    pub fn new(spacing: f32, offset: Offset, size: Size, padding: Padding, scroll: Option<ScrollAnchor>) -> Self {
+        Column(spacing, offset, size, padding, scroll.is_some().then_some(Arc::new(Mutex::new(0.0))), scroll.unwrap_or_default())
     }
 
     pub fn center(spacing: f32) -> Self {
-        Column(spacing, Offset::Center, Size::Fill, Padding::default(), None)
+        Column(spacing, Offset::Center, Size::Fill, Padding::default(), None, ScrollAnchor::default())
     }
 
     pub fn start(spacing: f32) -> Self {
-        Column(spacing, Offset::Start, Size::Fill, Padding::default(), None)
+        Column(spacing, Offset::Start, Size::Fill, Padding::default(), None, ScrollAnchor::default())
     }
 
     pub fn end(spacing: f32) -> Self {
-        Column(spacing, Offset::End, Size::Fill, Padding::default(), None)
+        Column(spacing, Offset::End, Size::Fill, Padding::default(), None, ScrollAnchor::default())
     }
 
     pub fn padding(&mut self) -> &mut Padding {&mut self.3}
-    pub fn adjust_scroll(&mut self, delta: f32) { if let Some(s) = &mut self.4 { **s.lock().as_mut().unwrap() += delta; }}
+
+    pub fn adjust_scroll(&mut self, delta: f32) { 
+        if let Some(s) = &mut self.4 { 
+            match self.5 {
+                ScrollAnchor::Start => **s.lock().as_mut().unwrap() += delta,
+                ScrollAnchor::End => **s.lock().as_mut().unwrap() -= delta,
+            }
+        }
+    }
+
     pub fn set_scroll(&mut self, val: f32) { if let Some(s) = &mut self.4 { **s.lock().as_mut().unwrap() = val; } }
 }
 
@@ -379,25 +388,35 @@ impl Layout for Column {
         self.3.adjust_request(SizeRequest::new(minimum.0, minimum.1, width.1, height.1).add_height(spacing))
     }
 
-    fn build(&self, col_size: (f32, f32), children: Vec<SizeRequest>) -> Vec<Area> {
+    fn build(&self, col_size: (f32, f32), mut children: Vec<SizeRequest>) -> Vec<Area> {
         if self.4.is_some() {
+            let is_end = self.5 == ScrollAnchor::End;
+
+            if is_end { children.reverse(); }
             let col_size = self.3.adjust_size(col_size);
-            let heights = UniformExpand::get(children.iter().map(|i| (i.min_height(), i.max_height())).collect::<Vec<_>>(), col_size.1, self.0);
-            let mut offset = 0.0;
-            let children_height = children.iter().map(|i| i.min_height()).sum::<f32>();
-            let content_height = children_height + (self.0 * children.len().saturating_sub(1) as f32);
+            let spacing = self.0 * children.len().saturating_sub(1) as f32;
+            let content_height: f32 = children.iter().map(|c| c.min_height()).sum::<f32>() + spacing;
             let max_scroll = (content_height - col_size.1).max(0.0);
-            children.clone().into_iter().zip(heights).map(|(i, height)| {
-                let size = i.get((col_size.0, height));
+            let mut offset = if is_end { col_size.1 } else { 0.0 };
+            let heights = UniformExpand::get(children.iter().map(|c| (c.min_height(), c.max_height())).collect(), col_size.1, self.0);
+
+            let areas: Vec<_> = children.iter().cloned().zip(heights).map(|(child, h)| {
+                let size = child.get((col_size.0, h));
+                if is_end { offset -= size.1 + self.0; }
                 let mut off = self.3.adjust_offset((self.1.get(col_size.0, size.0), offset));
-                if let Some(sv) = &self.4 {
-                    let mut scroll_val = sv.lock().unwrap();
-                    *scroll_val = scroll_val.clamp(0.0, max_scroll);
-                    off.1 -= *scroll_val;
+
+                if let Some(scroll) = &self.4 {
+                    let mut sv = scroll.lock().unwrap();
+                    *sv = sv.clamp(0.0, max_scroll);
+                    off.1 += if is_end { *sv } else { -*sv };
                 }
-                offset += size.1+self.0;
-                Area{offset: off, size}
-            }).collect()
+
+                if !is_end { offset += size.1 + self.0; }
+                Area { offset: off, size }
+            }).collect();
+
+            if is_end { return areas.into_iter().rev().collect(); }
+            areas
         } else {
             let col_size = self.3.adjust_size(col_size);
             let heights = UniformExpand::get(children.iter().map(|i| (i.min_height(), i.max_height())).collect::<Vec<_>>(), col_size.1, self.0);
@@ -566,8 +585,9 @@ impl Layout for Wrap {
 }
 
 /// Defines the reference point for scrolling content.
-#[derive(Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub enum ScrollAnchor {
+    #[default]
     Start,
     End,
 }

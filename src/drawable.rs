@@ -36,8 +36,18 @@ pub trait Drawable: Debug + Any + Downcast {
 
     fn name(&self) -> String {std::any::type_name_of_val(self).to_string()}
 
-    fn event(&mut self, _ctx: &mut Context, _sized: &SizedTree, _event: Box<dyn Event>) {}
+    fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {}
 }
+
+
+// 1. drawables should have requist size and build/draw fn
+// 2. event needs to accept mut root (define what a root is) instead of self or context
+// 3. context should be root (root has inner drawable)
+// 4. components should return a layout and the implementation of drawable should use the layout directly
+//     change the component macro to return the layout;
+    
+// 6. creat root object that cand do everything that we want it to do then give it cookies
+
 
 impl_downcast!(Drawable);
 
@@ -82,8 +92,7 @@ impl Drawable for Text {
         RequestTree(SizeRequest::fixed(self.size()), vec![])
     }
 
-    fn draw(&self, sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
-        println!("size: {:?}", sized.0);
+    fn draw(&self, _sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
         vec![(CanvasArea{offset, bounds: Some(bound)}, CanvasItem::Text(self.clone()))]
     }
 }
@@ -165,7 +174,7 @@ impl<C: Component + 'static + OnEvent> Drawable for C {
 
     fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {
         let children = sized.1.iter().map(|(o, branch)| Area{offset: *o, size: branch.0}).collect::<Vec<_>>();
-        for event in OnEvent::on_event(self, ctx, event) {
+        for event in OnEvent::on_event(self, ctx, sized, event) {
             event.pass(ctx, &children).into_iter().zip(self.children_mut()).zip(sized.1.iter()).for_each(
                 |((e, child), branch)| if let Some(e) = e {child.event(ctx, &branch.1, e);}
             );

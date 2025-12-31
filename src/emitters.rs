@@ -1,6 +1,6 @@
 use crate::event::{self, OnEvent, Key, NamedKey, Event, TickEvent, MouseEvent, MouseState, KeyboardEvent, KeyboardState};
 use crate::{events, Context, Request};
-use crate::drawable::{Drawable, Component};
+use crate::drawable::{Drawable, Component, SizedTree};
 use crate::layout::Stack;
 use std::time::Duration;
 
@@ -21,7 +21,7 @@ impl<D: Drawable + 'static> Button<D> {
 }
 
 impl<D: Drawable + 'static> OnEvent for Button<D> {
-    fn on_event(&mut self, _ctx: &mut Context, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
+    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if let Some(event) = event.downcast_ref::<MouseEvent>() {
             // return match event.state {
             //     MouseState::Pressed if event.position.is_some() => 
@@ -70,7 +70,7 @@ impl<D: Drawable + 'static> NumericalInput<D> {
 }
 
 impl<D: Drawable + 'static> OnEvent for NumericalInput<D> {
-    fn on_event(&mut self, _ctx: &mut Context, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(KeyboardEvent { state: KeyboardState::Pressed, key }) = event.downcast_ref::<KeyboardEvent>() {
 
             match key {
@@ -110,7 +110,7 @@ impl<D: Drawable + 'static> Selectable<D> {
     }
 }
 impl<D: Drawable + 'static> OnEvent for Selectable<D> {
-    fn on_event(&mut self, ctx: &mut Context, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
+    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if let Some(MouseEvent { state: MouseState::Pressed, position: Some(_) }) = event.downcast_ref::<MouseEvent>() {
             ctx.send(Request::Event(Box::new(event::Selectable::Pressed(self.2.to_string(), self.3.to_string()))));
         } else if let Some(event::Selectable::Pressed(id, group_id)) = event.downcast_ref::<event::Selectable>() {
@@ -136,7 +136,7 @@ impl<D: Drawable + 'static> Slider<D> {
 }
 
 impl<D: Drawable + 'static> OnEvent for Slider<D> {
-    fn on_event(&mut self, _ctx: &mut Context, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
+    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if let Some(MouseEvent { state, position, }) = event.downcast_ref::<MouseEvent>() {
             return match (state, position) {
                 (MouseState::Pressed, Some((x, _))) => {
@@ -173,7 +173,7 @@ impl<D: Drawable + 'static> TextInput<D> {
 }
 
 impl<D: Drawable + 'static> OnEvent for TextInput<D> {
-    fn on_event(&mut self, _ctx: &mut Context, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(e) = event.downcast_ref::<MouseEvent>() {
             let mut events: Vec<Box<dyn Event>> = Vec::new();
 
@@ -228,7 +228,7 @@ impl<D: Drawable + 'static> std::ops::DerefMut for Scrollable<D> {
 }
 
 impl<D: Drawable + 'static> OnEvent for Scrollable<D> {
-    fn on_event(&mut self, _ctx: &mut Context, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(MouseEvent{position: Some(position), state}) = event.downcast_ref::<event::MouseEvent>() {
             match state {
                 MouseState::Pressed => {
@@ -278,7 +278,7 @@ impl<D: Drawable + 'static> Momentum<D> {
 }
 
 impl<D: Drawable + 'static> OnEvent for Momentum<D> {
-    fn on_event(&mut self, ctx: &mut Context, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
+    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if crate::IS_MOBILE {
             if let Some(MouseEvent{position: Some(position), state}) = event.downcast_ref::<MouseEvent>() {
                 match state {

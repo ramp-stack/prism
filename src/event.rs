@@ -1,5 +1,6 @@
 use crate::layout::Area;
 use crate::Context;
+use crate::drawable::SizedTree;
 
 use std::fmt::Debug;
 
@@ -8,7 +9,7 @@ use downcast_rs::{Downcast, impl_downcast};
 pub type Events = std::collections::VecDeque<Box<dyn Event>>;
 
 pub trait OnEvent {
-    fn on_event(&mut self, _ctx: &mut Context, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {vec![event]}
+    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {vec![event]}
 }
 
 //Function for event to decide on weather to pass the event to a child, Event can also be modified for the child
@@ -72,11 +73,11 @@ impl Event for MouseEvent {
             let position = self.position.and_then(|position| (!passed).then(|| (
                 position.0 > offset.0 &&
                 position.0 < offset.0+size.0 &&
-                 position.1 > offset.1 &&
+                position.1 > offset.1 &&
                 position.1 < offset.1+size.1
-                ).then(|| {
-                    passed = true;
-                    (position.0 - offset.0, position.1 - offset.1)
+            ).then(|| {
+                passed = true;
+                (position.0 - offset.0, position.1 - offset.1)
             })).flatten());
 
             Some(Box::new(MouseEvent{position, state: self.state}) as Box<dyn Event>)
