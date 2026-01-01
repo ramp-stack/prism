@@ -36,7 +36,7 @@ pub trait Drawable: Debug + Any + Downcast {
 
     fn name(&self) -> String {std::any::type_name_of_val(self).to_string()}
 
-    fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {}
+    fn event(&mut self, _ctx: &mut Context, _sized: &SizedTree, _event: Box<dyn Event>) {}
 }
 
 

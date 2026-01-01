@@ -139,11 +139,27 @@ impl Offset {
     }
 }
 
-type CustomFunc = dyn Fn(Vec<(f32, f32)>) -> (f32, f32);
+// type CustomFunc = dyn Fn(Vec<(f32, f32)>) -> (f32, f32);
 type FitFunc = fn(Vec<(f32, f32)>) -> (f32, f32);
 
+pub trait CustomFunc: Fn(Vec<(f32, f32)>) -> (f32, f32) + 'static {
+    fn clone_box(&self) -> Box<dyn CustomFunc>;
+}
+
+impl<F> CustomFunc for F where F: Fn(Vec<(f32, f32)>) -> (f32, f32) + Clone + 'static {
+    fn clone_box(&self) -> Box<dyn CustomFunc> { Box::new(self.clone()) }
+}
+
+impl Clone for Box<dyn CustomFunc> {fn clone(&self) -> Self {self.as_ref().clone_box()}}
+
+impl std::fmt::Debug for dyn CustomFunc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Page Builder...")
+    }
+}
+
 /// Enum specifying how a layout should size and resize its content.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub enum Size {
     #[default]
     /// Layout automatically fits the size of its children.
@@ -152,12 +168,12 @@ pub enum Size {
     Fill,
     /// Layout uses a fixed, static size.
     Static(f32),
-    /// Layout size is determined by a custom function.
-    Custom(Box<CustomFunc>),
+    //// Layout size is determined by a custom function.
+    Custom(Box<dyn CustomFunc>),
 }
 
 impl Size {
-    pub fn custom(func: impl Fn(Vec<(f32, f32)>) -> (f32, f32) + 'static) -> Self {
+    pub fn custom(func: impl Fn(Vec<(f32, f32)>) -> (f32, f32) + Clone + 'static) -> Self {
         Size::Custom(Box::new(func))
     }
 
@@ -283,7 +299,7 @@ impl UniformExpand {
 ///```rust
 /// let layout = Row::new(24.0, Offset::Center, Size::Fit, Padding::new(8.0));
 ///```
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Row(f32, Offset, Size, Padding);
 
 impl Row {
@@ -341,7 +357,7 @@ impl Layout for Row {
 ///```rust
 /// let layout = Column::new(24.0, Offset::Center, Size::Fit, Padding::new(8.0));
 ///```
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Column(f32, Offset, Size, Padding, Option<Arc<Mutex<f32>>>, ScrollAnchor);
 
 impl Column {
@@ -441,7 +457,7 @@ impl Layout for Column {
 ///```rust
 /// let layout = Stack(Offset::Center, Offset::Center, Size::Fit, Size::Fit, Padding::new(8.0));
 ///```
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Stack(pub Offset, pub Offset, pub Size, pub Size, pub Padding);
 
 impl Stack {
@@ -495,7 +511,7 @@ impl Layout for Stack {
 ///```rust
 /// let layout = Wrap::new(8.0, 8.0);
 ///```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Wrap(pub f32, pub f32, pub Offset, pub Offset, pub Padding, Arc<Mutex<f32>>);
 
 impl Wrap {
