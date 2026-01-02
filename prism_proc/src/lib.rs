@@ -112,60 +112,67 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                         children
                     }
 
-                    fn request_size(&self, children: Vec<prism::layout::SizeRequest>) -> prism::layout::SizeRequest {
-                        prism::layout::Layout::request_size(&self.#layout, children)
-                    }
-                    fn build(&self, size: (f32, f32), children: Vec<prism::layout::SizeRequest>) -> Vec<prism::layout::Area> {
-                        prism::layout::Layout::build(&self.#layout, size, children)
+                    fn layout(&self) -> &dyn prism::layout::Layout {
+                        &self.#layout
                     }
                 }
             })
         },
         Data::Enum(enu) => {
-            let starts = enu.variants.into_iter().map(|v| {
+            let (layouts, (children, children_mut)): (Vec<_>, (Vec<_>, Vec<_>)) = enu.variants.into_iter().map(|v| {
                 let name = v.ident;
-                match v.fields {
+                let (layout, children) = match v.fields {
                     Fields::Named(named) => {
                         let mut iterator = named.named.into_iter();
-                        iterator.next().map(|f| (
-                            if let Type::Path(TypePath{path: Path{segments, ..}, ..}) = f.ty {
-                                segments.first().filter(|s| s.ident.to_string() == "Box".to_string()).is_some()
-                            } else {false},
-                            TokenStream::from(quote!{Self::#name{c, ..} => })
-                        ))
+                        (
+                            TokenTree::Ident(iterator.next().map(|f| f.ident).flatten().unwrap_or_else(|| {panic!("Component requires the first field of the structure to be the layout");})),
+                            iterator.flat_map(|field|
+                                (!has_tag(&field, "skip")).then(|| ChildType::from_field(&field.ty, TokenTree::Ident(field.ident.unwrap())))
+                            ).collect()
+                        )
                     },
                     Fields::Unnamed(unnamed) => {
-                        let mut iterator = unnamed.unnamed.iter();
-                        iterator.next().map(|f| (
-                            if let Type::Path(TypePath{path: Path{segments, ..}, ..}) = &f.ty {
-                                segments.first().filter(|s| s.ident.to_string() == "Box".to_string()).is_some()
-                            } else {false},
-                            TokenStream::from(quote!{Self::#name(c, ..) => })
-                        ))
+                        let mut iterator = unnamed.unnamed.iter().enumerate();
+                        iterator.next().unwrap_or_else(|| {panic!("Component requires the first field of the structure to be the layout");});
+                        (
+                            TokenTree::Literal(Literal::usize_unsuffixed(0)),
+                            iterator.flat_map(|(index, field)|
+                                (!has_tag(&field, "skip")).then(|| ChildType::from_field(&field.ty, TokenTree::Literal(Literal::usize_unsuffixed(index))))
+                            ).collect()
+                        )
                     },
-                    Fields::Unit => None,
-                }.unwrap_or_else(|| {panic!("Enumerator Component requires the first field of each variant to be a Component");})
-            }).collect::<Vec<_>>();
+                    Fields::Unit => panic!("No Unit Enum Variants"),
+                };
+                (quote!{
+                    Self::#name(layout, _, other, _, name) => {
+
+                    },
+                }, (
+
+                ))
+            }).unzip();
             let children_mut = TokenStream::from_iter(starts.iter().map(|(b, s)| if !b {quote!{#s vec![c as &mut dyn prism::drawable::Drawable],}} else {quote!{#s vec![&mut **c as &mut dyn prism::drawable::Drawable],}}));
             let children = TokenStream::from_iter(starts.iter().map(|(b, s)| if !b {quote!{#s vec![c as &dyn prism::drawable::Drawable],}} else {quote!{#s vec![&**c as &dyn prism::drawable::Drawable],}}));
             proc_macro::TokenStream::from(quote!{
                 impl #impl_generics Component for #name #ty_generics #where_clause {
                     fn children_mut(&mut self) -> Vec<&mut dyn prism::drawable::Drawable> {
+                        let mut children = vec![];
                         match self {
                             #children_mut
                         }
+                        children
                     }
                     fn children(&self) -> Vec<&dyn prism::drawable::Drawable> {
+                        let mut children = vec![];
                         match self {
                             #children
                         }
+                        children
                     }
-
-                    fn request_size(&self, mut children: Vec<prism::layout::SizeRequest>) -> prism::layout::SizeRequest {
-                        children.remove(0)
-                    }
-                    fn build(&self, size: (f32, f32), children: Vec<prism::layout::SizeRequest>) -> Vec<prism::layout::Area> {
-                        vec![prism::layout::Area{offset: (0.0, 0.0), size}]
+                    fn layout(&self) -> &dyn prism::drawable::Layout {
+                        match self {
+                            #layout
+                        }
                     }
                 }
             })

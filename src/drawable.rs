@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::any::Any;
 
 use crate::event::*;
-use crate::layout::{SizeRequest, Area};
+use crate::layout::{SizeRequest, Area, Layout};
 use crate::Context;
 
 use wgpu_canvas::{Image, Shape, Text, Area as CanvasArea, Item as CanvasItem};
@@ -123,23 +123,23 @@ impl Drawable for Image {
 /// Unlike simple `Drawable`s, components can contain other 
 /// drawables and define their own layout, rendering, and event handling.
 pub trait Component: Debug where Self: 'static {
-    /// Returns mutable reference to child drawables.
     fn children_mut(&mut self) -> Vec<&mut dyn Drawable>;
-    /// Returns reference to child drawables.
     fn children(&self) -> Vec<&dyn Drawable>;
-
-    /// Compute layout needs based on children.
-    fn request_size(&self, children: Vec<SizeRequest>) -> SizeRequest;
-    /// Position children and return their areas.
-    fn build(&self, size: Size, children: Vec<SizeRequest>) -> Vec<Area>;
+    fn layout(&self) -> &dyn Layout;
 }
 //TODO: could relpaces request_size and build with a layout getter and run Layout methods directly
 
 impl<C: Component + 'static + OnEvent> Drawable for C {
     fn request_size(&self) -> RequestTree {
+        let timer = std::time::Instant::now();
         let requests = self.children().into_iter().map(Drawable::request_size).collect::<Vec<_>>();
+        println!("Drawable::request_size took: {:?}", timer.elapsed().as_nanos());
+        let timer = std::time::Instant::now();
         let info = requests.iter().map(|i| i.0).collect::<Vec<_>>();
-        let r = Component::request_size(self, info);
+        println!("Collecting requests took: {:?}", timer.elapsed().as_nanos());
+        let timer = std::time::Instant::now();
+        let r = self.layout().request_size(info);
+        println!("Component::request_size took: {:?}", timer.elapsed().as_nanos());
         RequestTree(r, requests)
     }
 
@@ -148,7 +148,7 @@ impl<C: Component + 'static + OnEvent> Drawable for C {
         let children = request.1.iter().map(|b| b.0).collect::<Vec<_>>();
         SizedTree(
             size,
-            Component::build(self, size, children).into_iter()
+            self.layout().build(size, children).into_iter()
             .zip(self.children()).zip(request.1)
             .map(|((Area{offset, size}, child), branch)| {
                 (offset, child.build(size, branch))

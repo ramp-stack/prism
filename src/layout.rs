@@ -237,6 +237,7 @@ pub struct UniformExpand;
 
 impl UniformExpand {
     pub fn get(sizes: Vec<(f32, f32)>, max_size: f32, spacing: f32) -> Vec<f32> {
+        if sizes.is_empty() {return vec![];}
         // Calculate the total spacing and the minimum size required
         let spacing = (sizes.len() - 1) as f32 * spacing;
         let min_size = sizes.iter().fold(0.0, |s, i| s + i.0) + spacing;
