@@ -13,14 +13,14 @@ impl<L: Layout + 'static, D: Drawable + 'static> Bin<L, D> {
     pub fn inner(&mut self) -> &mut D {
         &mut self.1
     }
-    pub fn layout(&mut self) -> &mut L {
+    pub fn get_layout(&mut self) -> &mut L {
         &mut self.0
     }
 }
 
 /// A container that optionally displays a drawable item, toggling between visible and hidden states.
 #[derive(Debug, Component)]
-pub struct Opt<D: Drawable + 'static>(Stack, Option<D>, Option<D>);
+pub struct Opt<D: Drawable + 'static>(Stack, Option<D>, #[skip] Option<D>);
 impl<D: Drawable + 'static> OnEvent for Opt<D> {}
 
 impl<D: Drawable + 'static> Opt<D> {

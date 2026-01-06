@@ -82,9 +82,6 @@ impl<D: Drawable + Debug + Any> Drawable for Option<D> {
 
     fn name(&self) -> String { self.as_ref().map(|d| d.name()).unwrap_or("None".to_string()) }
 
-    fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {
-        if let Some(d) = self { d.event(ctx, sized, event); }
-    }
 }
 
 impl Drawable for Text {
@@ -131,15 +128,9 @@ pub trait Component: Debug where Self: 'static {
 
 impl<C: Component + 'static + OnEvent> Drawable for C {
     fn request_size(&self) -> RequestTree {
-        let timer = std::time::Instant::now();
         let requests = self.children().into_iter().map(Drawable::request_size).collect::<Vec<_>>();
-        println!("Drawable::request_size took: {:?}", timer.elapsed().as_nanos());
-        let timer = std::time::Instant::now();
         let info = requests.iter().map(|i| i.0).collect::<Vec<_>>();
-        println!("Collecting requests took: {:?}", timer.elapsed().as_nanos());
-        let timer = std::time::Instant::now();
         let r = self.layout().request_size(info);
-        println!("Component::request_size took: {:?}", timer.elapsed().as_nanos());
         RequestTree(r, requests)
     }
 
