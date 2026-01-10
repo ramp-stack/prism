@@ -202,7 +202,7 @@ impl<D: Drawable + 'static> OnEvent for TextInput<D> {
             events.push(event);
             return events;
         } else if let Some(KeyboardEvent { state: KeyboardState::Pressed, key: _ }) = event.downcast_ref() {
-            return if self.2 { vec![event] } else { Vec::new() };
+            return if self.2 { vec![event, Box::new(event::TextInput::Edited)] } else { Vec::new() };
         }
 
         vec![event]

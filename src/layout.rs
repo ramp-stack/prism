@@ -238,8 +238,7 @@ pub struct UniformExpand;
 impl UniformExpand {
     pub fn get(sizes: Vec<(f32, f32)>, max_size: f32, spacing: f32) -> Vec<f32> {
         if sizes.is_empty() {return vec![];}
-        // Calculate the total spacing and the minimum size required
-        let spacing = (sizes.len() - 1) as f32 * spacing;
+        let mut spacing = sizes.len().saturating_sub(1) as f32 * spacing;
         let min_size = sizes.iter().fold(0.0, |s, i| s + i.0) + spacing;
 
         let mut sizes = sizes.into_iter().map(|s| (s.0, s.1)).collect::<Vec<_>>();
@@ -328,7 +327,7 @@ impl Layout for Row {
         let (widths, heights): (Vec<_>, Vec<_>) = children.into_iter().map(|i|
             ((i.min_width(), i.max_width()), (i.min_height(), i.max_height()))
         ).unzip();
-        let spacing = self.0*(widths.len()-1) as f32;
+        let spacing = self.0 * (widths.len() - 1) as f32;
         let width = Size::add(widths);
         let height = self.2.get(heights, Size::max);
         self.3.adjust_request(SizeRequest::new(width.0, height.0, width.1, height.1).add_width(spacing))
@@ -336,14 +335,12 @@ impl Layout for Row {
 
     fn build(&self, row_size: (f32, f32), children: Vec<SizeRequest>) -> Vec<Area> {
         let row_size = self.3.adjust_size(row_size);
-
         let widths = UniformExpand::get(children.iter().map(|i| (i.min_width(), i.max_width())).collect::<Vec<_>>(), row_size.0, self.0);
-
         let mut offset = 0.0;
         children.into_iter().zip(widths).map(|(i, width)| {
             let size = i.get((width, row_size.1));
             let off = self.3.adjust_offset((offset, self.1.get(row_size.1, size.1)));
-            offset += size.0+self.0;
+            if size.0 > 0.0 {offset += size.0+self.0;}
             Area{offset: off, size}
         }).collect()
     }
@@ -401,51 +398,43 @@ impl Layout for Column {
         let spacing = self.0*(heights.len()-1) as f32;
         let width = self.2.get(widths, Size::max);
         let height = Size::add(heights.clone());
-        let minimum = if self.4.is_some() {(0.0, 0.0)} else {(width.0, height.0)};
-        self.3.adjust_request(SizeRequest::new(minimum.0, minimum.1, width.1, height.1).add_height(spacing))
+        let size_request = match self.4.is_some() {
+            true => SizeRequest::new(0.0, 0.0, width.1, f32::MAX),
+            false => SizeRequest::new(width.0, height.0, width.1, height.1)
+        };
+        self.3.adjust_request(size_request.add_height(spacing))
     }
 
     fn build(&self, col_size: (f32, f32), mut children: Vec<SizeRequest>) -> Vec<Area> {
-        if self.4.is_some() {
-            let is_end = self.5 == ScrollAnchor::End;
+        let col_size = self.3.adjust_size(col_size);
 
-            if is_end { children.reverse(); }
-            let col_size = self.3.adjust_size(col_size);
-            let spacing = self.0 * children.len().saturating_sub(1) as f32;
-            let content_height: f32 = children.iter().map(|c| c.min_height()).sum::<f32>() + spacing;
-            let max_scroll = (content_height - col_size.1).max(0.0);
-            let mut offset = if is_end { col_size.1 } else { 0.0 };
-            let heights = UniformExpand::get(children.iter().map(|c| (c.min_height(), c.max_height())).collect(), col_size.1, self.0);
+        let spacing = self.0 * children.len().saturating_sub(1) as f32;
+        let ranges: Vec<_> = children.iter().map(|c| (c.min_height(), c.max_height())).collect();
+        let heights = UniformExpand::get(ranges, col_size.1, self.0);
+        let content_height = heights.iter().sum::<f32>() + spacing;
 
-            let areas: Vec<_> = children.iter().cloned().zip(heights).map(|(child, h)| {
-                let size = child.get((col_size.0, h));
-                if is_end { offset -= size.1 + self.0; }
-                let mut off = self.3.adjust_offset((self.1.get(col_size.0, size.0), offset));
+        let mut offset = self.1.get(col_size.1, content_height).max(0.0);
 
-                if let Some(scroll) = &self.4 {
-                    let mut sv = scroll.lock().unwrap();
-                    *sv = sv.clamp(0.0, max_scroll);
-                    off.1 += if is_end { *sv } else { -*sv };
-                }
+        let max_scroll = (content_height - col_size.1).max(0.0);
+        let scroll = self.4.as_ref().map(|s| {
+            let mut v = s.lock().unwrap();
+            *v = v.clamp(0.0, max_scroll);
+            *v
+        }).unwrap_or(0.0);
 
-                if !is_end { offset += size.1 + self.0; }
-                Area { offset: off, size }
-            }).collect();
+        let is_end = self.5 == ScrollAnchor::End;
+        if is_end { children.reverse(); }
 
-            if is_end { return areas.into_iter().rev().collect(); }
-            areas
-        } else {
-            let col_size = self.3.adjust_size(col_size);
-            let heights = UniformExpand::get(children.iter().map(|i| (i.min_height(), i.max_height())).collect::<Vec<_>>(), col_size.1, self.0);
-            let mut offset = 0.0;
-            children.into_iter().zip(heights).map(|(i, height)| {
-                let size = i.get((col_size.0, height));
-                let off = self.3.adjust_offset((self.1.get(col_size.0, size.0), offset));
-                offset += size.1+self.0;
-                Area{offset: off, size}
-            }).collect()
-        }
+        let mut areas: Vec<_> = children.into_iter().zip(heights).map(|(child, h)| {
+            let size = child.get((col_size.0, h));
+            let off_y = if is_end { offset -= size.1 + self.0; offset } else { let o = offset; offset += size.1 + self.0; o };
+            Area { offset: self.3.adjust_offset((self.1.get(col_size.0, size.0), off_y - scroll)), size }
+        }).collect();
+
+        if is_end { areas.reverse(); }
+        areas
     }
+
 }
 
 

@@ -17,6 +17,10 @@ pub enum Request {
     Service(String, String)
 }
 
+impl Request {
+    pub fn event(e: impl Event + 'static) -> Self {Request::Event(Box::new(e))}
+}
+
 #[derive(Debug)]
 pub struct FrameSettings {
 

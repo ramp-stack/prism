@@ -4,6 +4,7 @@ use quote::quote;
 
 enum ChildType {
     Vector(TokenTree),
+    Tuple(TokenTree, usize),
     Child(TokenTree),
     HashMap(TokenTree),
     Opt(TokenTree),
@@ -41,6 +42,7 @@ impl ChildType {
             Type::Path(TypePath{path: Path{segments, ..}, ..}) if segments.first().filter(|s| s.ident.to_string() == "Box".to_string()).is_some() => {
                 ChildType::Boxed(ident)
             },
+            Type::Tuple(tuple) => ChildType::Tuple(ident, tuple.elems.len()),
             _ => ChildType::Child(ident)
         }
     }
@@ -87,7 +89,11 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                 ChildType::Opt(name) => quote!{if let Some(item) = self.#name.as_mut() {children.push(item as &mut dyn prism::drawable::Drawable);}},
                 ChildType::OptBox(name) => quote!{if let Some(item) = self.#name.as_mut() {children.push(&mut **item as &mut dyn prism::drawable::Drawable);}},
                 ChildType::Boxed(name) => quote!{children.push(&mut *self.#name as &mut dyn prism::drawable::Drawable);},
-                ChildType::VecBox(name) => quote!{children.extend(self.#name.iter_mut().map(|c| &mut **c as &mut dyn prism::drawable::Drawable));}
+                ChildType::VecBox(name) => quote!{children.extend(self.#name.iter_mut().map(|c| &mut **c as &mut dyn prism::drawable::Drawable));},
+                ChildType::Tuple(name, arity) => {
+                    let indices = (0..*arity).map(syn::Index::from);
+                    quote!{#(children.push(&mut self.#name.#indices as &mut dyn prism::drawable::Drawable);)*}
+                }
             }));
             let children = TokenStream::from_iter(children.iter().map(|child| match child {
                 ChildType::Vector(name) => quote!{children.extend(self.#name.iter().map(|c| c as &dyn prism::drawable::Drawable));},
@@ -96,7 +102,11 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                 ChildType::Opt(name) => quote!{if let Some(item) = self.#name.as_ref() {children.push(item as &dyn prism::drawable::Drawable);}},
                 ChildType::OptBox(name) => quote!{if let Some(item) = self.#name.as_ref() {children.push(&**item as &dyn prism::drawable::Drawable);}},
                 ChildType::Boxed(name) => quote!{children.push(&*self.#name as &dyn prism::drawable::Drawable);},
-                ChildType::VecBox(name) => quote!{children.extend(self.#name.iter().map(|c| &**c as &dyn prism::drawable::Drawable));}
+                ChildType::VecBox(name) => quote!{children.extend(self.#name.iter().map(|c| &**c as &dyn prism::drawable::Drawable));},
+                ChildType::Tuple(name, arity) => {
+                    let indices = (0..*arity).map(syn::Index::from);
+                    quote!{#(children.push(&self.#name.#indices as &dyn prism::drawable::Drawable);)*}
+                }
             }));
 
             proc_macro::TokenStream::from(quote!{
@@ -138,7 +148,7 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
 
             let build = |child_pushes: Vec<TokenStream>, children: Vec<ChildType>, variant: &syn::Ident| {
                 let child_pushes = child_pushes.into_iter();
-                let bindings = children.iter().map(|child| match child {ChildType::Vector(name) | ChildType::HashMap(name) | ChildType::Child(name) | ChildType::Opt(name) | ChildType::OptBox(name) | ChildType::Boxed(name) | ChildType::VecBox(name) => name});
+                let bindings = children.iter().map(|child| match child {ChildType::Tuple(name, ..) | ChildType::Vector(name) | ChildType::HashMap(name) | ChildType::Child(name) | ChildType::Opt(name) | ChildType::OptBox(name) | ChildType::Boxed(name) | ChildType::VecBox(name) => name});
 
                 quote! {
                     Self::#variant { #(#bindings,)* .. } => {
@@ -157,6 +167,10 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                 ChildType::OptBox(name) => quote!{if let Some(item) = #name.as_mut() {children.push(&mut **item as &mut dyn prism::drawable::Drawable);}},
                 ChildType::Boxed(name) => quote!{children.push(&mut **#name as &mut dyn prism::drawable::Drawable);},
                 ChildType::VecBox(name) => quote!{children.extend(#name.iter_mut().map(|c| &mut **c as &mut dyn prism::drawable::Drawable));},
+                ChildType::Tuple(name, arity) => {
+                    let indices = (0..*arity).map(syn::Index::from);
+                    quote!{#(children.push(&mut self.#name.#indices as &mut dyn prism::drawable::Drawable);)*}
+                }
             }).collect(), children, variant));
 
             let children_arms = variants.clone().map(|(variant, _layout, children)| build(children.iter().map(|child| match child {
@@ -167,6 +181,10 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                 ChildType::OptBox(name) => quote!{if let Some(item) = #name.as_ref() {children.push(&**item as &dyn prism::drawable::Drawable);}},
                 ChildType::Boxed(name) => quote!{children.push(&**#name as &dyn prism::drawable::Drawable);},
                 ChildType::VecBox(name) => quote!{children.extend(#name.iter().map(|c| &**c as &dyn prism::drawable::Drawable));},
+                ChildType::Tuple(name, arity) => {
+                    let indices = (0..*arity).map(syn::Index::from);
+                    quote!{#(children.push(&self.#name.#indices as &dyn prism::drawable::Drawable);)*}
+                }
             }).collect(), children, variant));
 
             let layout_arms = variants.map(|(variant, layout, _)| {quote!{Self::#variant { #layout, .. } => {#layout as &dyn prism::layout::Layout}}});
