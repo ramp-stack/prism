@@ -1,6 +1,6 @@
 use std::sync::{Mutex, Arc};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Area {
     pub offset: (f32, f32),
     pub size: (f32, f32)
@@ -172,6 +172,18 @@ pub enum Size {
     Custom(Box<dyn CustomFunc>),
 }
 
+impl PartialEq for Size {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Size::Fit, Size::Fit) => true,
+            (Size::Fill, Size::Fill) => true,
+            (Size::Static(a), Size::Static(b)) => a == b,
+            (Size::Custom(_), Size::Custom(_)) => false, // intentional
+            _ => false,
+        }
+    }
+}
+
 impl Size {
     pub fn custom(func: impl Fn(Vec<(f32, f32)>) -> (f32, f32) + Clone + 'static) -> Self {
         Size::Custom(Box::new(func))
@@ -210,7 +222,7 @@ impl std::fmt::Debug for Size {
 ///```rust
 /// let padding = Padding(24.0, 16.0, 24.0, 16.0);
 ///```
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Padding(pub f32, pub f32, pub f32, pub f32);
 
 impl Padding {
@@ -238,7 +250,7 @@ pub struct UniformExpand;
 impl UniformExpand {
     pub fn get(sizes: Vec<(f32, f32)>, max_size: f32, spacing: f32) -> Vec<f32> {
         if sizes.is_empty() {return vec![];}
-        let mut spacing = sizes.len().saturating_sub(1) as f32 * spacing;
+        let spacing = sizes.len().saturating_sub(1) as f32 * spacing;
         let min_size = sizes.iter().fold(0.0, |s, i| s + i.0) + spacing;
 
         let mut sizes = sizes.into_iter().map(|s| (s.0, s.1)).collect::<Vec<_>>();
@@ -299,7 +311,7 @@ impl UniformExpand {
 ///```rust
 /// let layout = Row::new(24.0, Offset::Center, Size::Fit, Padding::new(8.0));
 ///```
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Row(f32, Offset, Size, Padding);
 
 impl Row {
@@ -357,6 +369,16 @@ impl Layout for Row {
 ///```
 #[derive(Debug, Default, Clone)]
 pub struct Column(f32, Offset, Size, Padding, Option<Arc<Mutex<f32>>>, ScrollAnchor);
+
+impl PartialEq for Column {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+        && self.1 == other.1
+        && self.2 == other.2
+        && self.3 == other.3
+        && self.5 == other.5
+    }
+}
 
 impl Column {
     pub fn new(spacing: f32, offset: Offset, size: Size, padding: Padding, scroll: Option<ScrollAnchor>) -> Self {
@@ -447,7 +469,7 @@ impl Layout for Column {
 ///```rust
 /// let layout = Stack(Offset::Center, Offset::Center, Size::Fit, Size::Fit, Padding::new(8.0));
 ///```
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Stack(pub Offset, pub Offset, pub Size, pub Size, pub Padding);
 
 impl Stack {
@@ -521,6 +543,20 @@ impl Wrap {
         Wrap(w_spacing, h_spacing, Offset::Center, Offset::Center, Padding::default(), Arc::new(Mutex::new(0.0)))
     }
 }
+
+
+impl PartialEq for Wrap {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+        && self.1 == other.1
+        && self.2 == other.2
+        && self.3 == other.3
+        && self.4 == other.4
+        // intentionally ignore self.5
+    }
+}
+
+
 impl Layout for Wrap {
     fn request_size(&self, children: Vec<SizeRequest>) -> SizeRequest {
         let mut lw = self.4.1;

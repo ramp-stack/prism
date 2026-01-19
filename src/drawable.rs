@@ -55,6 +55,7 @@ impl Drawable for Box<dyn Drawable> {
     fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {
         Drawable::event(&mut **self, ctx, sized, event)
     }
+
 }
 
 impl<D: Drawable + Debug + Any> Drawable for Option<D> {
@@ -85,6 +86,7 @@ impl Drawable for Text {
     fn draw(&self, _sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
         vec![(CanvasArea{offset, bounds: Some(bound)}, CanvasItem::Text(self.clone()))]
     }
+
 }
 
 impl Drawable for Shape {
@@ -176,6 +178,30 @@ macro_rules! drawables {
         }
     };
 }
+
+// pub trait EqDrawable {
+//     fn eq_dyn(&self, other: &dyn Drawable) -> bool;
+// }
+
+// impl<T> EqDrawable for T where T: Drawable + PartialEq + Any, {
+//     fn eq_dyn(&self, other: &dyn Drawable) -> bool {
+//         other.downcast_ref::<T>().map_or(false, |o| self == o)
+//     }
+// }
+
+// impl PartialEq for dyn Drawable {
+//     fn eq(&self, other: &Self) -> bool {
+//         let a = self as &dyn Any;
+//         let b = other as &dyn Any;
+
+//         if let (Some(a), Some(b)) = (
+//             a.downcast_ref::<&dyn EqDrawable>(),
+//             b.downcast_ref::<&dyn EqDrawable>(),
+//         ) {a.eq_dyn(other)} else {false}
+//     }
+// }
+
+
 
 // se std::fmt::Debug;
 // use std::any::Any;

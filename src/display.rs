@@ -73,7 +73,6 @@ impl<L: Drawable + 'static, R: Drawable + 'static> EitherOr<L, R> {
 pub struct Enum(Stack, HashMap<String, Opt<Box<dyn Drawable>>>, #[skip] String);
 impl OnEvent for Enum {}
 
-
 impl Enum {
     /// Creates a new [`Enum`] component with the given drawable items.
     /// The first item will be visible by default.

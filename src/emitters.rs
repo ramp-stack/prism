@@ -210,24 +210,24 @@ impl<D: Drawable + 'static> OnEvent for TextInput<D> {
 }
 
 #[derive(Debug, Component)]
-pub struct Scrollable<D: Drawable + 'static>(Stack, pub Momentum<D>, #[skip] (f32, f32));
+pub struct Scrollable<D: Drawable + PartialEq + 'static>(Stack, pub Momentum<D>, #[skip] (f32, f32));
 
-impl<D: Drawable + 'static> Scrollable<D> {
+impl<D: Drawable + PartialEq + 'static> Scrollable<D> {
     pub fn new(child: D) -> Self {
         Scrollable(Stack::default(), Momentum::new(child), (0.0, 0.0))
     }
 }
 
-impl<D: Drawable + 'static> std::ops::Deref for Scrollable<D> {
+impl<D: Drawable + PartialEq + 'static> std::ops::Deref for Scrollable<D> {
     type Target = Momentum<D>;
     fn deref(&self) -> &Self::Target {&self.1}
 }
 
-impl<D: Drawable + 'static> std::ops::DerefMut for Scrollable<D> {
+impl<D: Drawable + PartialEq + 'static> std::ops::DerefMut for Scrollable<D> {
     fn deref_mut(&mut self) -> &mut Self::Target {&mut self.1}
 }
 
-impl<D: Drawable + 'static> OnEvent for Scrollable<D> {
+impl<D: Drawable + PartialEq + 'static> OnEvent for Scrollable<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(MouseEvent{position: Some(position), state}) = event.downcast_ref::<event::MouseEvent>() {
             match state {
