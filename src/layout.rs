@@ -96,6 +96,15 @@ impl SizeRequest {
             self.max_height.max(other.max_height)
         )
     }
+
+    pub fn combine(&self, other: &Self) -> SizeRequest {
+        SizeRequest::new(
+            self.min_width+other.min_width,
+            self.min_height+other.min_height,
+            self.max_width+other.max_width,
+            self.max_height+other.max_height
+        )  
+    }
 }
 
 /// A simple stack layout that overlays children on top of each other.

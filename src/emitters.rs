@@ -14,13 +14,13 @@ use std::time::Duration;
 ///
 /// This allows components to react to common button states without manually handling raw input.
 ///
-#[derive(Debug, Component)]
-pub struct Button<D: Drawable + 'static>(Stack, pub D);
-impl<D: Drawable + 'static> Button<D> {
+#[derive(Debug, Component, Clone)]
+pub struct Button<D: Drawable + Clone + 'static>(Stack, pub D);
+impl<D: Drawable + Clone + 'static> Button<D> {
     pub fn new(child: D) -> Self {Button(Stack::default(), child)}
 }
 
-impl<D: Drawable + 'static> OnEvent for Button<D> {
+impl<D: Drawable + Clone + 'static> OnEvent for Button<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if let Some(event) = event.downcast_ref::<MouseEvent>() {
             // return match event.state {
@@ -60,16 +60,16 @@ impl<D: Drawable + 'static> OnEvent for Button<D> {
     }
 }
 
-#[derive(Debug, Component)]
-pub struct NumericalInput<D: Drawable + 'static>(Stack, pub D);
+#[derive(Debug, Component, Clone)]
+pub struct NumericalInput<D: Drawable + Clone + 'static>(Stack, pub D);
 
-impl<D: Drawable + 'static> NumericalInput<D> {
+impl<D: Drawable + Clone + 'static> NumericalInput<D> {
     pub fn new(child: D) -> Self {
         NumericalInput(Stack::default(), child)
     }
 }
 
-impl<D: Drawable + 'static> OnEvent for NumericalInput<D> {
+impl<D: Drawable + Clone + 'static> OnEvent for NumericalInput<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(KeyboardEvent { state: KeyboardState::Pressed, key }) = event.downcast_ref::<KeyboardEvent>() {
 
@@ -102,14 +102,14 @@ impl<D: Drawable + 'static> OnEvent for NumericalInput<D> {
 /// - [`Selectable::Pressed(id, group_id)`](crate::event::Selectable::Pressed) - when this element was pressed,
 /// - [`Selectable::Selected(true)`](crate::event::Selectable::Selected) - when this element was selected,
 /// - [`Selectable::Selected(false)`](crate::event::Selectable::Selected) - when another item in the same group was selected.
-#[derive(Debug, Component)]
-pub struct Selectable<D: Drawable + 'static>(Stack, pub D, #[skip] uuid::Uuid, #[skip] uuid::Uuid);
-impl<D: Drawable + 'static> Selectable<D> {
+#[derive(Debug, Component, Clone)]
+pub struct Selectable<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] uuid::Uuid, #[skip] uuid::Uuid);
+impl<D: Drawable + Clone + 'static> Selectable<D> {
     pub fn new(child: D, group_id: uuid::Uuid) -> Self {
         Selectable(Stack::default(), child, uuid::Uuid::new_v4(), group_id)
     }
 }
-impl<D: Drawable + 'static> OnEvent for Selectable<D> {
+impl<D: Drawable + Clone + 'static> OnEvent for Selectable<D> {
     fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if let Some(MouseEvent { state: MouseState::Pressed, position: Some(_) }) = event.downcast_ref::<MouseEvent>() {
             ctx.send(Request::Event(Box::new(event::Selectable::Pressed(self.2.to_string(), self.3.to_string()))));
@@ -129,13 +129,13 @@ impl<D: Drawable + 'static> OnEvent for Selectable<D> {
 /// - [`Slider::Start(x)`](crate::event::Slider::Start) — when the user clicks or begins dragging.
 /// - [`Slider::Moved(x)`](crate::event::Slider::Moved) — while dragging with the mouse pressed.
 /// - Automatically stops tracking when released.
-#[derive(Debug, Component)]
-pub struct Slider<D: Drawable + 'static>(Stack, pub D, #[skip] bool);
-impl<D: Drawable + 'static> Slider<D> {
+#[derive(Debug, Component, Clone)]
+pub struct Slider<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] bool);
+impl<D: Drawable + Clone + 'static> Slider<D> {
     pub fn new(child: D) -> Self {Slider(Stack::default(), child, false)}
 }
 
-impl<D: Drawable + 'static> OnEvent for Slider<D> {
+impl<D: Drawable + Clone + 'static> OnEvent for Slider<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if let Some(MouseEvent { state, position, }) = event.downcast_ref::<MouseEvent>() {
             return match (state, position) {
@@ -166,13 +166,13 @@ impl<D: Drawable + 'static> OnEvent for Slider<D> {
 /// - [`TextInput::Hover(true)`](crate::event::TextInput::Hover) — when the mouse hovers over the input.
 /// - [`TextInput::Hover(false)`](crate::event::TextInput::Hover) — when the mouse leaves the input.
 /// - Passes keyboard events through only when focused.
-#[derive(Debug, Component)]
-pub struct TextInput<D: Drawable + 'static>(Stack, pub D, #[skip] bool);
-impl<D: Drawable + 'static> TextInput<D> {
+#[derive(Debug, Component, Clone)]
+pub struct TextInput<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] bool);
+impl<D: Drawable + Clone + 'static> TextInput<D> {
     pub fn new(child: D) -> Self {TextInput(Stack::default(), child, false)}
 }
 
-impl<D: Drawable + 'static> OnEvent for TextInput<D> {
+impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(e) = event.downcast_ref::<MouseEvent>() {
             let mut events: Vec<Box<dyn Event>> = Vec::new();
@@ -209,25 +209,25 @@ impl<D: Drawable + 'static> OnEvent for TextInput<D> {
     }
 }
 
-#[derive(Debug, Component)]
-pub struct Scrollable<D: Drawable + PartialEq + 'static>(Stack, pub Momentum<D>, #[skip] (f32, f32));
+#[derive(Debug, Component, Clone)]
+pub struct Scrollable<D: Drawable + Clone + PartialEq + 'static>(Stack, pub Momentum<D>, #[skip] (f32, f32));
 
-impl<D: Drawable + PartialEq + 'static> Scrollable<D> {
+impl<D: Drawable + Clone + PartialEq + 'static> Scrollable<D> {
     pub fn new(child: D) -> Self {
         Scrollable(Stack::default(), Momentum::new(child), (0.0, 0.0))
     }
 }
 
-impl<D: Drawable + PartialEq + 'static> std::ops::Deref for Scrollable<D> {
+impl<D: Drawable + Clone + PartialEq + 'static> std::ops::Deref for Scrollable<D> {
     type Target = Momentum<D>;
     fn deref(&self) -> &Self::Target {&self.1}
 }
 
-impl<D: Drawable + PartialEq + 'static> std::ops::DerefMut for Scrollable<D> {
+impl<D: Drawable + Clone + PartialEq + 'static> std::ops::DerefMut for Scrollable<D> {
     fn deref_mut(&mut self) -> &mut Self::Target {&mut self.1}
 }
 
-impl<D: Drawable + PartialEq + 'static> OnEvent for Scrollable<D> {
+impl<D: Drawable + Clone + PartialEq + 'static> OnEvent for Scrollable<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(MouseEvent{position: Some(position), state}) = event.downcast_ref::<event::MouseEvent>() {
             match state {
@@ -250,8 +250,8 @@ impl<D: Drawable + PartialEq + 'static> OnEvent for Scrollable<D> {
     }
 }
 
-#[derive(Debug, Component)]
-pub struct Momentum<D: Drawable + 'static> {
+#[derive(Debug, Component, Clone)]
+pub struct Momentum<D: Drawable + Clone + 'static> {
     layout: Stack,
     pub inner: D,
     #[skip] touching: bool,
@@ -262,7 +262,7 @@ pub struct Momentum<D: Drawable + 'static> {
     #[skip] speed: Option<f32>,
 }
 
-impl<D: Drawable + 'static> Momentum<D> {
+impl<D: Drawable + Clone + 'static> Momentum<D> {
     pub fn new(child: D) -> Self { 
         Momentum {
             layout: Stack::default(),
@@ -277,7 +277,7 @@ impl<D: Drawable + 'static> Momentum<D> {
     }
 }
 
-impl<D: Drawable + 'static> OnEvent for Momentum<D> {
+impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
     fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if crate::IS_MOBILE {
             if let Some(MouseEvent{position: Some(position), state}) = event.downcast_ref::<MouseEvent>() {

@@ -127,6 +127,7 @@ macro_rules! events {
 pub enum Button {
     Pressed(bool),
     Hover(bool),
+    Disable(bool),
 }
 
 impl Event for Button {

@@ -8,6 +8,7 @@ use crate::Context;
 use wgpu_canvas::{Image, Shape, Text, Area as CanvasArea, Item as CanvasItem};
 
 use downcast_rs::{Downcast, impl_downcast};
+pub use dyn_clone::{DynClone, clone_trait_object};
 
 pub use prism_proc::Component;
 
@@ -26,7 +27,7 @@ pub type Size = (f32, f32);
 /// The `Drawable` trait is implemented by all visual elements
 /// such as shapes, text, and images.
 #[allow(private_bounds)]
-pub trait Drawable: Debug + Any + Downcast {
+pub trait Drawable: DynClone + Debug + Any + Downcast {
     fn request_size(&self) -> RequestTree;
 
     fn build(&self, size: Size, request: RequestTree) -> SizedTree {
@@ -39,6 +40,7 @@ pub trait Drawable: Debug + Any + Downcast {
     fn event(&mut self, _ctx: &mut Context, _sized: &SizedTree, _event: Box<dyn Event>) {}
 }
 
+clone_trait_object!(Drawable);
 impl_downcast!(Drawable);
 
 impl Drawable for Box<dyn Drawable> {
@@ -58,7 +60,7 @@ impl Drawable for Box<dyn Drawable> {
 
 }
 
-impl<D: Drawable + Debug + Any> Drawable for Option<D> {
+impl<D: Drawable + Debug + Any + Clone> Drawable for Option<D> {
     fn request_size(&self) -> RequestTree {
         self.as_ref().map(|d| Drawable::request_size(d)).unwrap_or_default()
     }
@@ -72,7 +74,7 @@ impl<D: Drawable + Debug + Any> Drawable for Option<D> {
     }
 
     fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {
-        self.as_mut().map(|d| Drawable::event(d, ctx, sized, event));
+        if let Some(d) = self.as_mut() { Drawable::event(d, ctx, sized, event); }
     }
 
     fn name(&self) -> String { self.as_ref().map(|d| Drawable::name(d)).unwrap_or("None".to_string()) }
@@ -114,14 +116,14 @@ impl Drawable for Image {
 /// `Component` represents higher-level UI building blocks. 
 /// Unlike simple `Drawable`s, components can contain other 
 /// drawables and define their own layout, rendering, and event handling.
-pub trait Component: Debug where Self: 'static {
+pub trait Component: Clone + Debug where Self: 'static {
     fn children_mut(&mut self) -> Vec<&mut dyn Drawable>;
     fn children(&self) -> Vec<&dyn Drawable>;
     fn layout(&self) -> &dyn Layout;
 }
 //TODO: could relpaces request_size and build with a layout getter and run Layout methods directly
 
-impl<C: Component + 'static + OnEvent> Drawable for C {
+impl<C: Component + Clone + 'static + OnEvent> Drawable for C {
     fn request_size(&self) -> RequestTree {
         let requests = self.children().into_iter().map(Drawable::request_size).collect::<Vec<_>>();
         let info = requests.iter().map(|i| i.0).collect::<Vec<_>>();

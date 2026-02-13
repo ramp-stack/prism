@@ -2,14 +2,15 @@ use crate::drawable::{Drawable, Component};
 use crate::event::{OnEvent};
 use crate::layout::{Layout, Stack};
 use std::collections::HashMap;
+use std::clone::Clone;
 
 /// A container pairing a layout with a drawable element.
-#[derive(Debug, Component)]
-pub struct Bin<L: Layout + 'static, D: Drawable + 'static>(pub L, pub D);
+#[derive(Debug, Component, Clone)]
+pub struct Bin<L: Layout + Clone + 'static, D: Drawable + Clone + 'static>(pub L, pub D);
 
-impl<L: Layout + 'static, D: Drawable + 'static> OnEvent for Bin<L, D> {}
+impl<L: Layout + Clone + 'static, D: Drawable + Clone + 'static> OnEvent for Bin<L, D> {}
 
-impl<L: Layout + 'static, D: Drawable + 'static> Bin<L, D> {
+impl<L: Layout + Clone + 'static, D: Drawable + Clone + 'static> Bin<L, D> {
     pub fn inner(&mut self) -> &mut D {
         &mut self.1
     }
@@ -19,11 +20,11 @@ impl<L: Layout + 'static, D: Drawable + 'static> Bin<L, D> {
 }
 
 /// A container that optionally displays a drawable item, toggling between visible and hidden states.
-#[derive(Debug, Component)]
-pub struct Opt<D: Drawable + 'static>(Stack, Option<D>, #[skip] Option<D>);
-impl<D: Drawable + 'static> OnEvent for Opt<D> {}
+#[derive(Debug, Component, Clone)]
+pub struct Opt<D: Drawable + Clone + 'static>(Stack, Option<D>, #[skip] Option<D>);
+impl<D: Drawable + Clone + 'static> OnEvent for Opt<D> {}
 
-impl<D: Drawable + 'static> Opt<D> {
+impl<D: Drawable + Clone + 'static> Opt<D> {
     pub fn new(item: D, display: bool) -> Self {
         match display {
             true => Opt(Stack::default(), Some(item), None),
@@ -49,12 +50,12 @@ impl<D: Drawable + 'static> Opt<D> {
 }
 
 /// A container that holds two drawables but displays only one at a time, allowing toggling between them.
-#[derive(Debug, Component)]
-pub struct EitherOr<L: Drawable + 'static, R: Drawable + 'static>(Stack, Opt<L>, Opt<R>);
+#[derive(Debug, Component, Clone)]
+pub struct EitherOr<L: Drawable + Clone + 'static, R: Drawable + Clone + 'static>(Stack, Opt<L>, Opt<R>);
 
-impl<L: Drawable + 'static, R: Drawable + 'static> OnEvent for EitherOr<L, R> {}
+impl<L: Drawable + Clone + 'static, R: Drawable + Clone + 'static> OnEvent for EitherOr<L, R> {}
 
-impl<L: Drawable + 'static, R: Drawable + 'static> EitherOr<L, R> {
+impl<L: Drawable + Clone + 'static, R: Drawable + Clone + 'static> EitherOr<L, R> {
     pub fn new(left: L, right: R) -> Self {
         EitherOr(Stack::default(), Opt::new(left, true), Opt::new(right, false))
     }
@@ -69,12 +70,12 @@ impl<L: Drawable + 'static, R: Drawable + 'static> EitherOr<L, R> {
 }
 
 /// A container that holds multiple drawables but displays only one at a time, allowing toggling between them.
-#[derive(Debug, Component)]
+#[derive(Debug, Component, Clone)]
 pub struct Enum(Stack, HashMap<String, Opt<Box<dyn Drawable>>>, #[skip] String);
 impl OnEvent for Enum {}
 
 impl Enum {
-    /// Creates a new [`Enum`] component with the given drawable items.
+    /// Creates a new [`Enum`] component, Clone with the given drawable items.
     /// The first item will be visible by default.
     pub fn new(items: Vec<(String, Box<dyn Drawable>)>, start: String) -> Self {
         let items = items.into_iter().map(|(name, item)| {
