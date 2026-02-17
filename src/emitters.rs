@@ -167,9 +167,9 @@ impl<D: Drawable + Clone + 'static> OnEvent for Slider<D> {
 /// - [`TextInput::Hover(false)`](crate::event::TextInput::Hover) — when the mouse leaves the input.
 /// - Passes keyboard events through only when focused.
 #[derive(Debug, Component, Clone)]
-pub struct TextInput<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] bool);
+pub struct TextInput<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] Option<bool>);
 impl<D: Drawable + Clone + 'static> TextInput<D> {
-    pub fn new(child: D) -> Self {TextInput(Stack::default(), child, false)}
+    pub fn new(child: D, requires_focus: bool) -> Self {TextInput(Stack::default(), child, requires_focus.then_some(false))}
 }
 
 impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
@@ -179,16 +179,14 @@ impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
 
             match e.state {
                 MouseState::Pressed if e.position.is_some() => {
-                    self.2 = true;
+                    if let Some(focus) = &mut self.2 {*focus = true;}
                     events.push(Box::new(event::TextInput::Focused(true)));
                 }
-                MouseState::Pressed => {
-                    if e.position.is_none() && !crate::IS_MOBILE { 
-                        self.2 = false; 
-                        events.push(Box::new(event::TextInput::Focused(false)));
-                    }
+                MouseState::Pressed if e.position.is_none() && !crate::IS_MOBILE => { 
+                    if let Some(focus) = &mut self.2 {*focus = false;}
+                    events.push(Box::new(event::TextInput::Focused(false)));
                 },
-                MouseState::Moved | MouseState::Scroll(..) if !crate::IS_MOBILE && !self.2 => {
+                MouseState::Moved | MouseState::Scroll(..) if !crate::IS_MOBILE && !self.2.unwrap_or_default() => {
                     events.push(Box::new(event::TextInput::Hover(e.position.is_some())));
                 }
                 //     if !crate::IS_MOBILE && e.position.is_none() {
@@ -201,8 +199,12 @@ impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
 
             events.push(event);
             return events;
-        } else if let Some(KeyboardEvent { state: KeyboardState::Pressed, key: _ }) = event.downcast_ref() {
-            return if self.2 { vec![event, Box::new(event::TextInput::Edited)] } else { Vec::new() };
+        } else if let Some(KeyboardEvent { state: KeyboardState::Pressed, key }) = event.downcast_ref() {
+            let key = key.clone();
+            if let Some(focus) = self.2 {
+                return if focus { vec![event, Box::new(event::TextInput::Edited(key.clone()))] } else { Vec::new() };
+            }
+            return vec![event, Box::new(event::TextInput::Edited(key.clone()))];
         }
 
         vec![event]

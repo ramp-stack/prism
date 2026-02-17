@@ -71,16 +71,16 @@ impl<L: Drawable + Clone + 'static, R: Drawable + Clone + 'static> EitherOr<L, R
 
 /// A container that holds multiple drawables but displays only one at a time, allowing toggling between them.
 #[derive(Debug, Component, Clone)]
-pub struct Enum(Stack, HashMap<String, Opt<Box<dyn Drawable>>>, #[skip] String);
-impl OnEvent for Enum {}
+pub struct Enum<D: Drawable + Clone + 'static>(Stack, HashMap<String, Opt<D>>, #[skip] String);
+impl<D: Drawable + Clone + 'static> OnEvent for Enum<D> {}
 
-impl Enum {
+impl<D: Drawable + Clone + 'static> Enum<D> {
     /// Creates a new [`Enum`] component, Clone with the given drawable items.
     /// The first item will be visible by default.
-    pub fn new(items: Vec<(String, Box<dyn Drawable>)>, start: String) -> Self {
+    pub fn new(items: Vec<(String, D)>, start: String) -> Self {
         let items = items.into_iter().map(|(name, item)| {
             (name.to_string(), Opt::new(item, name == start))
-        }).collect::<Vec<(String, Opt<Box<dyn Drawable>>)>>();
+        }).collect::<Vec<(String, Opt<D>)>>();
 
         Enum(Stack::default(), items.into_iter().collect(), start.to_string())
     }
@@ -101,7 +101,7 @@ impl Enum {
     }
 
     pub fn current(&self) -> String { self.2.to_string() }
-    pub fn drawable(&mut self) -> &mut Opt<Box<dyn Drawable>> { 
+    pub fn drawable(&mut self) -> &mut Opt<D> { 
         self.1.get_mut(&self.2).unwrap() 
     }
 }
