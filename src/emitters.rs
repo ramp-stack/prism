@@ -113,11 +113,10 @@ impl<D: Drawable + Clone + 'static> OnEvent for Selectable<D> {
     fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if let Some(MouseEvent { state: MouseState::Pressed, position: Some(_) }) = event.downcast_ref::<MouseEvent>() {
             ctx.send(Request::Event(Box::new(event::Selectable::Pressed(self.2.to_string(), self.3.to_string()))));
-        } else if let Some(event::Selectable::Pressed(id, group_id)) = event.downcast_ref::<event::Selectable>() {
-            if *group_id == self.3.to_string() {
-                let is = *id == self.2.to_string();
-                return vec![Box::new(event::Selectable::Selected(is))]
-            }
+        } else if let Some(event::Selectable::Pressed(id, group_id)) = event.downcast_ref::<event::Selectable>()
+        && *group_id == self.3.to_string() {
+            let is = *id == self.2.to_string();
+            return vec![Box::new(event::Selectable::Selected(is))]
         }
         vec![event]
     }
@@ -300,35 +299,33 @@ impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
                     }, 
                 }
                 self.mouse = *position;
-            } else if event.downcast_ref::<TickEvent>().is_some() && !self.touching {
-                if let Some(time) = self.time {
-                    match &mut self.speed {
-                        Some(speed) => {
-                            *speed *= 0.92;
-                            if speed.abs() < 0.1 {
-                                self.time = None;
-                                self.speed = None;
-                                self.start_touch = None;
-                                return vec![event];
-                            }
-                        }
-                        None => {
-                            let start_y = self.start_touch.unwrap_or((0.0, 0.0)).1;
-                            let end_y = self.scroll.unwrap_or((0.0, 0.0)).1;
-                            let y_traveled = end_y - start_y;
-                            let time_secs = time.as_secs_f32();
-                            self.speed = Some(-((y_traveled / time_secs) * 0.05));
+            } else if event.downcast_ref::<TickEvent>().is_some() && !self.touching && let Some(time) = self.time {
+                match &mut self.speed {
+                    Some(speed) => {
+                        *speed *= 0.92;
+                        if speed.abs() < 0.1 {
+                            self.time = None;
+                            self.speed = None;
+                            self.start_touch = None;
+                            return vec![event];
                         }
                     }
+                    None => {
+                        let start_y = self.start_touch.unwrap_or((0.0, 0.0)).1;
+                        let end_y = self.scroll.unwrap_or((0.0, 0.0)).1;
+                        let y_traveled = end_y - start_y;
+                        let time_secs = time.as_secs_f32();
+                        self.speed = Some(-((y_traveled / time_secs) * 0.05));
+                    }
+                }
 
-                    if let Some(speed) = self.speed {
-                        let state = (speed.abs() > 0.01).then_some(
-                            MouseState::Scroll(0.0, speed)
-                        );
+                if let Some(speed) = self.speed {
+                    let state = (speed.abs() > 0.01).then_some(
+                        MouseState::Scroll(0.0, speed)
+                    );
 
-                        if let Some(s) = state {
-                            ctx.send(Request::Event(Box::new(MouseEvent { position: Some(self.mouse), state: s })));
-                        }
+                    if let Some(s) = state {
+                        ctx.send(Request::Event(Box::new(MouseEvent { position: Some(self.mouse), state: s })));
                     }
                 }
             }

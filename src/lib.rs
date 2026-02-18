@@ -193,7 +193,7 @@ pub const IS_WEB: bool = true;
 pub const IS_WEB: bool = false;
 
 use image::RgbaImage;
-use include_dir::{DirEntry, Dir, include_dir};
+use include_dir::{DirEntry, Dir};
 
 pub struct Assets;
 impl Assets {
