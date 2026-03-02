@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 image = "0.25.9"
-ramp = {package="ramp2", path="../../ramp"}
-prism = {package="prism2", path="../../prism"}
+ramp = {package="ramp2", version="0.1.3"}
+prism = {package="prism2", version="0.1.3"}
