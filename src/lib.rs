@@ -199,7 +199,7 @@ pub struct Assets;
 impl Assets {
     pub fn load_file(dir: &Dir, file: &str) -> Option<Vec<u8>> {
         dir.entries().iter().find_map(|e| match e {
-            DirEntry::File(f) => (f.path().to_str().unwrap() == file).then_some(f.contents().to_vec()),
+            DirEntry::File(f) => (f.path().to_str().unwrap().to_lowercase() == file.to_lowercase()).then_some(f.contents().to_vec()),
             _ => None,
         })
     }
@@ -210,5 +210,11 @@ impl Assets {
         let rgba = svg.rasterize(8.0).unwrap();
         let size = rgba.dimensions();
         RgbaImage::from_raw(size.0, size.1, rgba.into_raw()).unwrap()
+    }
+
+    pub fn load_png(dir: &Dir, file: &str) -> Option<RgbaImage> {
+        println!("Dir {:?}", dir);
+        let bytes = Assets::load_file(dir, file).expect("No file");
+        Some(image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).expect("No png").into_rgba8())
     }
 }

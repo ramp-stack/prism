@@ -231,7 +231,7 @@ impl std::fmt::Debug for Size {
 ///```rust
 /// let padding = Padding(24.0, 16.0, 24.0, 16.0);
 ///```
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Padding(pub f32, pub f32, pub f32, pub f32);
 
 impl Padding {

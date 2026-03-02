@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "prism2"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyanymap",
  "downcast-rs",
@@ -848,7 +848,9 @@ dependencies = [
 
 [[package]]
 name = "prism_proc"
-version = "0.1.0"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e34e8f2c1dcdf1181b362637cb21b3b43b4899d3752367e05042e840f042cfb0"
 dependencies = [
  "proc-macro2 1.0.103",
  "quote 1.0.42",
@@ -1248,7 +1250,9 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "wgpu_canvas"
-version = "5.0.4"
+version = "5.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "062a3d4773cfdc3be8026668616c58ae1dfb37e44083fa524256ede19bb76bf8"
 dependencies = [
  "fontdue",
  "image 0.25.9",

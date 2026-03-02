@@ -57,7 +57,6 @@ impl Drawable for Box<dyn Drawable> {
     fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {
         Drawable::event(&mut **self, ctx, sized, event)
     }
-
 }
 
 impl<D: Drawable + Debug + Any + Clone> Drawable for Option<D> {
