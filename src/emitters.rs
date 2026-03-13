@@ -15,44 +15,33 @@ use std::time::Duration;
 /// This allows components to react to common button states without manually handling raw input.
 ///
 #[derive(Debug, Component, Clone)]
-pub struct Button<D: Drawable + Clone + 'static>(Stack, pub D);
+pub struct Button<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] bool);
 impl<D: Drawable + Clone + 'static> Button<D> {
-    pub fn new(child: D) -> Self {Button(Stack::default(), child)}
+    pub fn new(child: D) -> Self {Button(Stack::default(), child, false)}
 }
 
 impl<D: Drawable + Clone + 'static> OnEvent for Button<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if let Some(event) = event.downcast_ref::<MouseEvent>() {
-            // return match event.state {
-            //     MouseState::Pressed if event.position.is_some() => 
-            //         events![event::Button::Pressed(true)],
-            //     MouseState::Moved | MouseState::Scroll(..) if !crate::IS_MOBILE => 
-            //         events![event::Button::Hover(event.position.is_some())],
-            //     MouseState::Released => {
-            //         match event.position.is_some() {
-            //             true if !crate::IS_MOBILE => events![event::Button::Hover(true)],
-            //             _ => events![event::Button::Pressed(false)],
-            //         } 
-            //     },
-            //     _ => Vec::new()
-            // };
-
             match event.state {
                 MouseState::Pressed if event.position.is_some() => {
+                    self.2 = true;
                     return events![event::Button::Pressed(true)];
-                }
-                // MouseState::Pressed if event.position.is_none() && !crate::IS_MOBILE => self.2 = false,
-                MouseState::Moved | MouseState::Scroll(..) if !crate::IS_MOBILE => {
+                },
+                MouseState::Moved | MouseState::Scroll(..) if !crate::IS_MOBILE && !self.2 => {
                     return events![event::Button::Hover(event.position.is_some())];
-                }
+                },
                 MouseState::Released => {
-                    if !crate::IS_MOBILE && event.position.is_some() {
-                        // true => events.push(Box::new(event::TextInput::Hover(true))),
-                        return events![event::Button::Hover(true)];
-                    } else {
-                        return events![event::Button::Pressed(false)];
-                    }
-                }
+                    let result = match !crate::IS_MOBILE && event.position.is_some() {
+                        true if self.2 => events![event::Button::Pressed(false), event::Button::Hover(true)],
+                        true => events![event::Button::Hover(true)],
+                        false if self.2 => events![event::Button::Pressed(false)],
+                        false => vec![]
+                    };
+
+                    self.2 = false;
+                    return result;
+                },
                 _ => {}
             }
         }

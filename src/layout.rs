@@ -1,6 +1,6 @@
 use std::sync::{Mutex, Arc};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Area {
     pub offset: (f32, f32),
     pub size: (f32, f32)
@@ -430,7 +430,7 @@ impl Layout for Column {
         let width = self.2.get(widths, Size::max);
         let height = Size::add(heights.clone());
         let size_request = match self.4.is_some() {
-            true => SizeRequest::new(0.0, 0.0, width.1, f32::MAX),
+            true => SizeRequest::new(0.0, 0.0, width.1, height.1),
             false => SizeRequest::new(width.0, height.0, width.1, height.1)
         };
         self.3.adjust_request(size_request.add_height(spacing))
@@ -444,7 +444,7 @@ impl Layout for Column {
         let heights = UniformExpand::get(ranges, col_size.1, self.0);
         let content_height = heights.iter().sum::<f32>() + spacing;
 
-        let mut offset = self.1.get(col_size.1, content_height).max(0.0);
+        let mut offset = 0.0; //Offset::Start.get(col_size.1, content_height).max(0.0);
 
         let max_scroll = (content_height - col_size.1).max(0.0);
         let scroll = self.4.as_ref().map(|s| {
@@ -458,8 +458,9 @@ impl Layout for Column {
 
         let mut areas: Vec<_> = children.into_iter().zip(heights).map(|(child, h)| {
             let size = child.get((col_size.0, h));
-            let off_y = if is_end { offset -= size.1 + self.0; offset } else { let o = offset; offset += size.1 + self.0; o };
-            Area { offset: self.3.adjust_offset((self.1.get(col_size.0, size.0), off_y - scroll)), size }
+            let off_y = { let o = offset; offset += size.1 + self.0; o };
+            let n = if is_end {col_size.1 - h + scroll} else {off_y - scroll};
+            Area { offset: self.3.adjust_offset((self.1.get(col_size.0, size.0), n)), size }
         }).collect();
 
         if is_end { areas.reverse(); }
@@ -561,76 +562,188 @@ impl PartialEq for Wrap {
         && self.2 == other.2
         && self.3 == other.3
         && self.4 == other.4
-        // intentionally ignore self.5
     }
 }
 
-
 impl Layout for Wrap {
     fn request_size(&self, children: Vec<SizeRequest>) -> SizeRequest {
-        let mut lw = self.4.1;
-        let mut lh = 0.0;
-        let mut th = self.4.0;
-        let mut max_lw: f32 = 0.0;
-        for child in children {
-            let (w, h) = (child.min_width(), child.min_height());
-            if lw + w > *self.5.lock().unwrap() && lw > self.4.1 {
-                th += lh + self.1;
-                max_lw = max_lw.max(lw - self.0);
-                lw = self.4.1;
-                lh = 0.0;
+        let available_width = *self.5.lock().unwrap();
+
+        let left = self.4.1;
+        let right = self.4.2;
+        let top = self.4.0;
+        let bottom = self.4.3;
+
+        if children.is_empty() {
+            let w = left + right;
+            let h = top + bottom;
+            return SizeRequest::fixed((w, h));
+        }
+
+        let widest_child = children
+            .iter()
+            .map(|c| c.min_width())
+            .fold(0.0_f32, f32::max);
+
+        let tallest_child = children
+            .iter()
+            .map(|c| c.min_height())
+            .fold(0.0_f32, f32::max);
+
+        let min_width = widest_child + left + right;
+
+        // If no width constraint is known yet, report a conservative minimum:
+        // one item wide, one row tall.
+        if available_width <= 0.0 {
+            let min_height = tallest_child + top + bottom;
+            return SizeRequest::new(min_width, min_height, f32::MAX, f32::MAX);
+        }
+
+        let content_width = (available_width - left - right).max(0.0);
+
+        let mut line_w = 0.0_f32;
+        let mut line_h = 0.0_f32;
+        let mut total_h = top;
+        let mut max_used_w = 0.0_f32;
+        let mut has_any = false;
+
+        for child in &children {
+            let w = child.min_width();
+            let h = child.min_height();
+
+            let projected_w = if line_w == 0.0 { w } else { line_w + self.0 + w };
+
+            if line_w > 0.0 && projected_w > content_width {
+                max_used_w = max_used_w.max(line_w);
+                total_h += line_h + self.1;
+
+                line_w = w;
+                line_h = h;
+            } else {
+                line_w = projected_w;
+                line_h = line_h.max(h);
             }
-            lw += w + self.0;
-            lh = lh.max(h);
+
+            has_any = true;
         }
-        if lw > self.4.1 {
-            th += lh;
-            max_lw = max_lw.max(lw - self.0);
+
+        if has_any {
+            max_used_w = max_used_w.max(line_w);
+            total_h += line_h;
         }
-        SizeRequest::new(max_lw + self.4.2, th + self.4.3, f32::MAX, f32::MAX)
+
+        let min_height = total_h + bottom;
+        let max_width = available_width.max(min_width);
+        let max_height = min_height;
+
+        // Minimum width stays "widest child", not "all children in one row".
+        // Height is computed for the current available width.
+        let _used_width_with_padding = max_used_w + left + right;
+
+        SizeRequest::new(min_width, min_height, max_width, max_height)
     }
 
     fn build(&self, maximum_size: (f32, f32), children: Vec<SizeRequest>) -> Vec<Area> {
-        *self.5.lock().unwrap() = maximum_size.0;
+        let left = self.4.1;
+        let right = self.4.2;
+        let top = self.4.0;
+        let _bottom = self.4.3;
 
-        let mut areas = Vec::new();
-        let mut line = Vec::new();
-        let mut tw = self.4.1;
-        let mut ho = self.4.0;
-        let mut lh = 0.0;
+        let content_width = (maximum_size.0 - left - right).max(0.0);
 
-        let flush = |line: &[(f32, f32)], tw: f32, _: f32, ho: f32| {
-            if line.is_empty() { return Vec::new(); }
-            let line_w = tw - self.0 - self.4.1;
-            let extra = (maximum_size.0 - line_w).max(0.0);
-            let start_x = match self.2 {
-                Offset::Start => self.4.1,
-                Offset::End => self.4.1 + extra,
-                Offset::Center => self.4.1 + extra / 2.0,
-                Offset::Static(_) => 0.0,
-            };
-            let mut x = start_x;
-            line.iter().map(|&(w, h)| {
-                let a = Area { offset: (x, ho), size: (w, h) };
-                x += w + self.0;
-                a
-            }).collect()
-        };
+        if let Ok(mut stored) = self.5.lock() {
+            *stored = maximum_size.0;
+        }
+
+        if children.is_empty() {
+            return Vec::new();
+        }
+
+        #[derive(Clone, Copy)]
+        struct Item {
+            w: f32,
+            h: f32,
+        }
+
+        let mut lines: Vec<Vec<Item>> = Vec::new();
+        let mut line_widths: Vec<f32> = Vec::new();
+        let mut line_heights: Vec<f32> = Vec::new();
+
+        let mut current_line: Vec<Item> = Vec::new();
+        let mut current_w = 0.0_f32;
+        let mut current_h = 0.0_f32;
 
         for child in children {
-            let (w, h) = (child.min_width(), child.min_height());
-            if tw + w > maximum_size.0 && tw > self.4.1 {
-                areas.extend(flush(&line, tw, lh, ho));
-                ho += lh + self.1;
-                tw = self.4.1;
-                lh = 0.0;
-                line.clear();
+            let item = Item {
+                w: child.min_width(),
+                h: child.min_height(),
+            };
+
+            let projected_w = if current_line.is_empty() {
+                item.w
+            } else {
+                current_w + self.0 + item.w
+            };
+
+            if !current_line.is_empty() && projected_w > content_width {
+                lines.push(current_line);
+                line_widths.push(current_w);
+                line_heights.push(current_h);
+
+                current_line = vec![item];
+                current_w = item.w;
+                current_h = item.h;
+            } else {
+                if current_line.is_empty() {
+                    current_w = item.w;
+                } else {
+                    current_w += self.0 + item.w;
+                }
+                current_h = current_h.max(item.h);
+                current_line.push(item);
             }
-            line.push((w, h));
-            tw += w + self.0;
-            lh = lh.max(h);
         }
-        areas.extend(flush(&line, tw, lh, ho));
+
+        if !current_line.is_empty() {
+            lines.push(current_line);
+            line_widths.push(current_w);
+            line_heights.push(current_h);
+        }
+
+        let mut areas = Vec::new();
+        let mut y = top;
+
+        for ((line, &line_w), &line_h) in lines.iter().zip(&line_widths).zip(&line_heights) {
+            let extra_x = (content_width - line_w).max(0.0);
+
+            let start_x = match self.2 {
+                Offset::Start => left,
+                Offset::End => left + extra_x,
+                Offset::Center => left + extra_x / 2.0,
+                Offset::Static(x) => left + x,
+            };
+
+            let mut x = start_x;
+
+            for item in line {
+                let child_y = match self.3 {
+                    Offset::Start => y,
+                    Offset::End => y + (line_h - item.h).max(0.0),
+                    Offset::Center => y + (line_h - item.h).max(0.0) / 2.0,
+                    Offset::Static(v) => y + v,
+                };
+
+                areas.push(Area {
+                    offset: (x, child_y),
+                    size: (item.w, item.h),
+                });
+
+                x += item.w + self.0;
+            }
+
+            y += line_h + self.1;
+        }
+
         areas
     }
 }
