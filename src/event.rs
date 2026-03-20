@@ -208,3 +208,14 @@ pub enum Key {
     Named(NamedKey),
     Character(String),
 }
+
+#[derive(Debug, Clone)]
+pub enum HardwareEvent {
+    Clipboard(String),
+}
+
+impl Event for HardwareEvent {
+    fn pass(self: Box<Self>, _ctx: &mut Context, children: &[Area]) -> Vec<Option<Box<dyn Event>>> {
+        children.iter().map(|_| Some(self.clone() as Box<dyn Event>)).collect()
+    }
+}

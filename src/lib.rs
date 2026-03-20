@@ -79,12 +79,16 @@ impl Instance {
         self.listeners.iter().for_each(|l| (l)(&mut ctx.state));
     }
 
-    pub fn handle_requests(&mut self) {
+    pub fn handle_requests(&mut self) -> Option<Hardware> {
         while let Ok(request) = self.receiver.try_recv() {
             match request {
                 prism::Request::Listener(listener) => self.add_listener(listener),
                 prism::Request::Event(event) => self.events.push_back(event),
-                prism::Request::Hardware(hardware) => println!("Attempting to start {hardware:?}"),
+                prism::Request::Hardware(hardware) => {return Some(hardware);},
+                // prism::Request::Hardware(hardware) => match hardware {
+                //     Hardware::SetClipboard(s) => 
+                //     _ => {}
+                // }
                     // x => println!("Attempting to start {x:?}")
                     //CameraStart,
                     //CameraFrame(FrameSettings),
@@ -100,6 +104,7 @@ impl Instance {
                 _ => {}
             }
         }
+        None
     }
 }
 
