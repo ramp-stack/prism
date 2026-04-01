@@ -4,6 +4,8 @@ use crate::drawable::{Drawable, Component, SizedTree};
 use crate::layout::Stack;
 use std::time::Duration;
 
+const TEXT_INPUT_UUID: uuid::Uuid = uuid::uuid!("123e4567-e89b-12d3-a456-426614174000");
+
 /// The [`Button`] emitter wraps a drawable component
 /// and converts mouse input into a small set of semantic button states:
 ///
@@ -28,7 +30,7 @@ impl<D: Drawable + Clone + 'static> OnEvent for Button<D> {
                     self.2 = true;
                     return events![event::Button::Pressed(true)];
                 },
-                MouseState::Moved | MouseState::Scroll(..) if !crate::IS_MOBILE && !self.2 => {
+                MouseState::Moved | MouseState::Scroll(..) if !crate::IS_MOBILE => {
                     return events![event::Button::Hover(event.position.is_some())];
                 },
                 MouseState::Released => {
@@ -157,12 +159,15 @@ impl<D: Drawable + Clone + 'static> OnEvent for Slider<D> {
 #[derive(Debug, Component, Clone)]
 pub struct TextInput<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] Option<bool>);
 impl<D: Drawable + Clone + 'static> TextInput<D> {
-    pub fn new(child: D, requires_focus: bool) -> Self {TextInput(Stack::default(), child, requires_focus.then_some(false))}
+    pub fn new(child: D, requires_focus: bool) -> Selectable<Self> {Selectable::new(TextInput(Stack::default(), child, requires_focus.then_some(false)), TEXT_INPUT_UUID)}
 }
 
 impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
-        if let Some(e) = event.downcast_ref::<MouseEvent>() {
+        if let Some(event::Selectable::Selected(selected)) = event.downcast_ref::<event::Selectable>() {
+            if let Some(focus) = &mut self.2 {*focus = *selected;}
+            return vec![Box::new(event::TextInput::Focused(*selected)), event];
+        } else if let Some(e) = event.downcast_ref::<MouseEvent>() {
             let mut events: Vec<Box<dyn Event>> = Vec::new();
 
             match e.state {
@@ -227,7 +232,7 @@ impl<D: Drawable + Clone + PartialEq + 'static> OnEvent for Scrollable<D> {
                 },
                 MouseState::Released => {
                     if (position.1 - self.2.1).abs() < 5.0 {
-                        return vec![Box::new(MouseEvent{position: Some(*position), state: MouseState::Pressed}) as Box<dyn Event>];
+                        return vec![Box::new(MouseEvent{position: Some(*position), state: MouseState::Pressed}), Box::new(MouseEvent{position: Some(*position), state: MouseState::Released})];
                     }
 
                     return Vec::new();

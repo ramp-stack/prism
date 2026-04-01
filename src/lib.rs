@@ -36,9 +36,9 @@ pub struct FrameSettings {}
 
 #[derive(Debug)]
 pub enum Hardware {
-    CameraStart,
-    CameraFrame(FrameSettings),
-    CameraStop,
+    GetCamera,
+    StopCamera,
+    GetSafeArea,
     PhotoPicker,
     SetClipboard(String),
     GetClipboard,
@@ -128,7 +128,6 @@ impl Context {
     }
 
     pub fn register_listener<T: Hash + Clone + 'static>(&mut self) -> Receiver<T> {
-        println!("Registering listener");
         let (sender, receiver) = channel();
         let _ = self.sender.send(Request::Listener(Box::new(move |state: &mut State| {
             let previous_hash = state.get_mut::<StoredHash<T>>().as_mut().map(|s| s.0).unwrap_or_default();
@@ -218,7 +217,6 @@ impl Assets {
     }
 
     pub fn load_png(dir: &Dir, file: &str) -> Option<RgbaImage> {
-        println!("Dir {:?}", dir);
         let bytes = Assets::load_file(dir, file).expect("No file");
         Some(image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).expect("No png").into_rgba8())
     }

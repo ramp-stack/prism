@@ -44,9 +44,7 @@ impl<D: Drawable + Clone + 'static> Opt<D> {
         self.1.as_mut().unwrap_or_else(|| self.2.as_mut().unwrap())
     }
 
-    pub fn is_showing(&self) -> bool {
-        self.1.is_some()
-    }
+    pub fn is_showing(&self) -> bool { self.1.is_some() }
 }
 
 /// A container that holds two drawables but displays only one at a time, allowing toggling between them.
@@ -67,6 +65,7 @@ impl<L: Drawable + Clone + 'static, R: Drawable + Clone + 'static> EitherOr<L, R
 
     pub fn left(&mut self) -> &mut L { self.1.inner() }
     pub fn right(&mut self) -> &mut R { self.2.inner() }
+    pub fn is_left(&self) -> bool { self.1.is_showing() }
 }
 
 /// A container that holds multiple drawables but displays only one at a time, allowing toggling between them.
@@ -88,16 +87,13 @@ impl<D: Drawable + Clone + 'static> Enum<D> {
     /// Displays only the item matching the given name and hides all others. 
     /// If the key doesn't exist, defaults to the first item.
     pub fn display(&mut self, name: &str) {
-        let key = match self.1.contains_key(name) { 
-            true => name.to_string(),
-            false => self.1.keys().next().unwrap().clone()
+        if self.1.contains_key(name) {  
+            self.2 = name.to_string();
+
+            for (k, v) in self.1.iter_mut() {
+                v.display(*k == name);
+            }
         };
-
-        self.2 = key.to_string();
-
-        for (k, v) in self.1.iter_mut() {
-            v.display(*k == key);
-        }
     }
 
     pub fn current(&self) -> String { self.2.to_string() }

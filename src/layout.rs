@@ -592,8 +592,6 @@ impl Layout for Wrap {
 
         let min_width = widest_child + left + right;
 
-        // If no width constraint is known yet, report a conservative minimum:
-        // one item wide, one row tall.
         if available_width <= 0.0 {
             let min_height = tallest_child + top + bottom;
             return SizeRequest::new(min_width, min_height, f32::MAX, f32::MAX);
@@ -636,8 +634,6 @@ impl Layout for Wrap {
         let max_width = available_width.max(min_width);
         let max_height = min_height;
 
-        // Minimum width stays "widest child", not "all children in one row".
-        // Height is computed for the current available width.
         let _used_width_with_padding = max_used_w + left + right;
 
         SizeRequest::new(min_width, min_height, max_width, max_height)

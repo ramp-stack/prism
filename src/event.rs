@@ -3,6 +3,8 @@ use crate::Context;
 use crate::drawable::SizedTree;
 
 use std::fmt::Debug;
+use std::sync::Arc;
+use image::RgbaImage;
 
 use downcast_rs::{Downcast, impl_downcast};
 
@@ -189,7 +191,6 @@ impl Event for NumericalInput {
     }
 }
 
-
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum NamedKey {
@@ -212,6 +213,8 @@ pub enum Key {
 #[derive(Debug, Clone)]
 pub enum HardwareEvent {
     Clipboard(String),
+    Camera(Arc<RgbaImage>),
+    SafeArea(f32, f32, f32, f32),
 }
 
 impl Event for HardwareEvent {
