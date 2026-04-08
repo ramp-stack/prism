@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "prism2"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyanymap",
  "downcast-rs",
@@ -1251,8 +1251,6 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 [[package]]
 name = "wgpu_canvas"
 version = "5.0.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37deb8b3ff4088be909bea9666d1f58c50a95ba8300d5facd8a340465da43298"
 dependencies = [
  "fontdue",
  "image 0.25.9",
