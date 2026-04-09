@@ -22,10 +22,6 @@ pub type Offset = (f32, f32);
 pub type Rect = (f32, f32, f32, f32);
 pub type Size = (f32, f32);
 
-/// A renderable element in the UI.
-///
-/// The `Drawable` trait is implemented by all visual elements
-/// such as shapes, text, and images.
 #[allow(private_bounds)]
 pub trait Drawable: DynClone + Debug + Any + Downcast {
     fn request_size(&self) -> RequestTree;
@@ -51,9 +47,7 @@ impl Drawable for Box<dyn Drawable> {
     fn draw(&self, sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
         Drawable::draw(&**self, sized, offset, bound)
     }
-
     fn name(&self) -> String {Drawable::name(&**self)}
-
     fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {
         Drawable::event(&mut **self, ctx, sized, event)
     }
@@ -63,19 +57,15 @@ impl<D: Drawable + Debug + Any + Clone> Drawable for Option<D> {
     fn request_size(&self) -> RequestTree {
         self.as_ref().map(|d| Drawable::request_size(d)).unwrap_or_default()
     }
-
     fn build(&self, size: Size, request: RequestTree) -> SizedTree {
         self.as_ref().map(|d| Drawable::build(d, size, request)).unwrap_or_default()
     }
-
     fn draw(&self, sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
         self.as_ref().map(|d| Drawable::draw(d, sized, offset, bound)).unwrap_or_default()
     }
-
     fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {
         if let Some(d) = self.as_mut() { Drawable::event(d, ctx, sized, event); }
     }
-
     fn name(&self) -> String { self.as_ref().map(|d| Drawable::name(d)).unwrap_or("None".to_string()) }
 }
 
@@ -83,18 +73,15 @@ impl Drawable for Text {
     fn request_size(&self) -> RequestTree {
         RequestTree(SizeRequest::fixed(self.size()), vec![])
     }
-
     fn draw(&self, _sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
         vec![(CanvasArea{offset, bounds: Some(bound)}, CanvasItem::Text(self.clone()))]
     }
-
 }
 
 impl Drawable for Shape {
     fn request_size(&self) -> RequestTree {
         RequestTree(SizeRequest::fixed(self.shape.size()), vec![])
     }
-
     fn draw(&self, _sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
         vec![(CanvasArea{offset, bounds: Some(bound)}, CanvasItem::Shape(*self))]
     }
@@ -104,28 +91,19 @@ impl Drawable for Image {
     fn request_size(&self) -> RequestTree {
         RequestTree(SizeRequest::fixed(self.shape.size()), vec![])
     }
-
     fn draw(&self, _sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
         vec![(CanvasArea{offset, bounds: Some(bound)}, CanvasItem::Image(self.clone()))]
     }
 }
 
-/// A composable UI element with children.
-///
-/// `Component` represents higher-level UI building blocks.
-/// Unlike simple `Drawable`s, components can contain other
-/// drawables and define their own layout, rendering, and event handling.
 pub trait Component: Clone + Debug where Self: 'static {
     fn children_mut(&mut self) -> Vec<&mut dyn Drawable>;
     fn children(&self) -> Vec<&dyn Drawable>;
     fn layout(&self) -> &dyn Layout;
 
-    /// When `true`, the component's draw output is clipped to its own
-    /// sized rect before being passed to children. Defaults to `false`.
-    ///
-    /// Override this to return a runtime field if you want per-instance
-    /// control (e.g. `fn clipped(&self) -> bool { self.clipped }`).
     fn clipped(&self) -> bool { false }
+
+    fn clip_origin(&self) -> Option<Offset> { None }
 }
 
 impl<C: Component + Clone + 'static + OnEvent> Drawable for C {
@@ -150,20 +128,19 @@ impl<C: Component + Clone + 'static + OnEvent> Drawable for C {
     }
 
     fn draw(&self, sized: &SizedTree, poffset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
-        // If this component has clipping enabled, narrow the bound to our
-        // own absolute rect before descending into children.
         let bound = if self.clipped() {
+            let clip_x = self.clip_origin().map(|o| o.0).unwrap_or(poffset.0);
+            let clip_y = self.clip_origin().map(|o| o.1).unwrap_or(poffset.1);
             (
-                bound.0.max(poffset.0),
-                bound.1.max(poffset.1),
-                bound.2.min(poffset.0 + sized.0.0),
-                bound.3.min(poffset.1 + sized.0.1),
+                bound.0.max(clip_x),
+                bound.1.max(clip_y),
+                bound.2.min(clip_x + sized.0.0),
+                bound.3.min(clip_y + sized.0.1),
             )
         } else {
             bound
         };
 
-        // Early-out if clip rect is empty.
         if self.clipped() && (bound.2 <= bound.0 || bound.3 <= bound.1) {
             return vec![];
         }
@@ -171,14 +148,12 @@ impl<C: Component + Clone + 'static + OnEvent> Drawable for C {
         sized.1.iter().zip(self.children()).flat_map(|((offset, branch), child)| {
             let size    = branch.0;
             let poffset = (poffset.0 + offset.0, poffset.1 + offset.1);
-
-            let bound = (
+            let bound   = (
                 bound.0.max(poffset.0),
                 bound.1.max(poffset.1),
                 bound.2.min(poffset.0 + size.0),
                 bound.3.min(poffset.1 + size.1),
             );
-
             if bound.2 > bound.0 && bound.3 > bound.1 {
                 child.draw(branch, poffset, bound)
             } else {
