@@ -49,7 +49,6 @@ pub enum Hardware {
 }
 
 anyanymap::Map!(State: );
-//implement btree from typeid to serde_json value. look things up by typeid then desereliazes
 
 pub struct StoredHash<T: Hash>(u64, PhantomData::<fn() -> T>);
 
@@ -85,22 +84,6 @@ impl Instance {
                 prism::Request::Listener(listener) => self.add_listener(listener),
                 prism::Request::Event(event) => self.events.push_back(event),
                 prism::Request::Hardware(hardware) => {return Some(hardware);},
-                // prism::Request::Hardware(hardware) => match hardware {
-                //     Hardware::SetClipboard(s) => 
-                //     _ => {}
-                // }
-                    // x => println!("Attempting to start {x:?}")
-                    //CameraStart,
-                    //CameraFrame(FrameSettings),
-                    //CameraStop,
-                    //PhotoPicker,
-                    //SetClipboard(String),
-                    //GetClipboard,
-                    //SetCloud(String, String),
-                    //GetCloud(String),
-                    //Share(String),
-                    //Haptic,
-                // },
                 _ => {}
             }
         }
@@ -108,12 +91,8 @@ impl Instance {
     }
 }
 
-/// There are three context actions which should be converted into serialized actions
-/// 1. Manipulate State where state is the only input and output
-/// 2. Send a request to the OS a Hardware or Service request
-/// 3. Send an event to be triggered
 pub struct Context {
-    state: State, // TODO: remove state from context and replace with sql
+    state: State,
     pub sender: Sender<Request>,
 }
 
@@ -183,7 +162,6 @@ impl<D: Drawable + Clone, T: Hash + Debug + Clone + 'static> Listener<D, T> {
     }
 }
 
-
 /// `true` if the target platform is iOS or Android, otherwise `false`.
 #[cfg(any(target_os = "ios", target_os = "android"))]
 pub const IS_MOBILE: bool = true;
@@ -219,5 +197,67 @@ impl Assets {
     pub fn load_png(dir: &Dir, file: &str) -> Option<RgbaImage> {
         let bytes = Assets::load_file(dir, file).expect("No file");
         Some(image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).expect("No png").into_rgba8())
+    }
+}
+
+/// Clips its child's rendering to its own layout-assigned bounds.
+///
+/// `Clip` is a pure render-time wrapper — it does not affect layout at all.
+/// `request_size` and `build` pass straight through to the inner drawable.
+/// Only `draw` is intercepted: the incoming `bound` rect is intersected with
+/// this component's own absolute rect so any child pixels outside are
+/// discarded by the canvas.
+///
+/// ```rust
+/// let label = Clip::new(my_text);
+/// ```
+#[derive(Debug, Clone)]
+pub struct Clip<D: Drawable + Clone + 'static>(pub D);
+
+impl<D: Drawable + Clone + 'static> Clip<D> {
+    pub fn new(inner: D) -> Self { Clip(inner) }
+    pub fn inner(&mut self) -> &mut D { &mut self.0 }
+}
+
+impl<D: Drawable + Clone + 'static> Drawable for Clip<D> {
+    fn request_size(&self) -> drawable::RequestTree {
+        Drawable::request_size(&self.0)
+    }
+
+    fn build(&self, size: drawable::Size, request: drawable::RequestTree) -> SizedTree {
+        Drawable::build(&self.0, size, request)
+    }
+
+    fn draw(
+        &self,
+        sized: &SizedTree,
+        offset: drawable::Offset,
+        bound: drawable::Rect,
+    ) -> Vec<(wgpu_canvas::Area, wgpu_canvas::Item)> {
+        let clipped: drawable::Rect = (
+            bound.0.max(offset.0),
+            bound.1.max(offset.1),
+            bound.2.min(offset.0 + sized.0.0),
+            bound.3.min(offset.1 + sized.0.1),
+        );
+
+        if clipped.2 <= clipped.0 || clipped.3 <= clipped.1 {
+            return vec![];
+        }
+
+        Drawable::draw(&self.0, sized, offset, clipped)
+    }
+
+    fn event(
+        &mut self,
+        ctx: &mut Context,
+        sized: &SizedTree,
+        event: Box<dyn crate::event::Event>,
+    ) {
+        Drawable::event(&mut self.0, ctx, sized, event)
+    }
+
+    fn name(&self) -> String {
+        format!("Clip<{}>", Drawable::name(&self.0))
     }
 }
