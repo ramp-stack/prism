@@ -55,6 +55,41 @@ pub enum KeyboardState {
     Released,
 }
 
+/// Tracks which modifier keys are currently held down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub meta: bool,
+}
+
+impl Modifiers {
+    pub fn none() -> Self {
+        Modifiers { shift: false, ctrl: false, alt: false, meta: false }
+    }
+
+    pub fn shift() -> Self {
+        Modifiers { shift: true, ..Self::none() }
+    }
+
+    pub fn ctrl() -> Self {
+        Modifiers { ctrl: true, ..Self::none() }
+    }
+
+    pub fn alt() -> Self {
+        Modifiers { alt: true, ..Self::none() }
+    }
+
+    pub fn meta() -> Self {
+        Modifiers { meta: true, ..Self::none() }
+    }
+
+    pub fn is_none(&self) -> bool {
+        !self.shift && !self.ctrl && !self.alt && !self.meta
+    }
+}
+
 /// # Mouse Event
 ///
 /// `MouseEvent` is triggered whenever the [`MouseState`] changes.
@@ -92,10 +127,12 @@ impl Event for MouseEvent {
 /// `KeyboardEvent` is triggered whenever the [`KeyboardState`] changes.
 /// 
 /// - `key`: The [`Key`] that triggered the event.
+/// - `modifiers`: The modifier keys held at the time of the event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyboardEvent {
     pub key: Key,
     pub state: KeyboardState,
+    pub modifiers: Modifiers,
 }
 
 impl Event for KeyboardEvent {
@@ -103,6 +140,7 @@ impl Event for KeyboardEvent {
         children.iter().map(|_| Some(self.clone() as Box<dyn Event>)).collect()
     }
 }
+
 /// # Tick Event
 ///
 /// `TickEvent` is emitted on every tick and can be used to perform continuous or repeated actions.
@@ -194,14 +232,53 @@ impl Event for NumericalInput {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum NamedKey {
+    // Navigation
     Enter,
     Tab,
     Space,
+    Backspace,
+    Escape,
     ArrowDown,
     ArrowLeft,
     ArrowRight,
     ArrowUp,
+    Home,
+    End,
+    PageUp,
+    PageDown,
     Delete,
+    Insert,
+    Shift,
+    Control,
+    Alt,
+    Meta, 
+    CapsLock,
+    NumLock,
+    ScrollLock,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
+    MediaPlay,
+    MediaPause,
+    MediaPlayPause,
+    MediaStop,
+    MediaNextTrack,
+    MediaPrevTrack,
+    VolumeUp,
+    VolumeDown,
+    VolumeMute,
+    PrintScreen,
+    Pause,
+    ContextMenu,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

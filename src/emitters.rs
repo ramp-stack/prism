@@ -1,4 +1,4 @@
-use crate::event::{self, OnEvent, Key, NamedKey, Event, TickEvent, MouseEvent, MouseState, KeyboardEvent, KeyboardState};
+use crate::event::{self, OnEvent, Key, NamedKey, Event, TickEvent, MouseEvent, MouseState, KeyboardEvent, KeyboardState, Modifiers};
 use crate::{events, Context, Request};
 use crate::drawable::{Drawable, Component, SizedTree};
 use crate::layout::Stack;
@@ -9,8 +9,8 @@ const TEXT_INPUT_UUID: uuid::Uuid = uuid::uuid!("123e4567-e89b-12d3-a456-4266141
 /// The [`Button`] emitter wraps a drawable component
 /// and converts mouse input into a small set of semantic button states:
 ///
-/// - [`Button::Pressed(true)`](crate::event::Button::Pressed) — when the mouse is pressed within the button’s bounds.
-/// - [`Button::Pressed(false)`](crate::event::Button::Pressed) — when the mouse is pressed outside the button’s bounds.
+/// - [`Button::Pressed(true)`](crate::event::Button::Pressed) — when the mouse is pressed within the button's bounds.
+/// - [`Button::Pressed(false)`](crate::event::Button::Pressed) — when the mouse is pressed outside the button's bounds.
 /// - [`Button::Hover(true)`](crate::event::Button::Hover) — when the mouse moves over the button.
 /// - [`Button::Hover(false)`](crate::event::Button::Hover) — when the mouse leaves the button.
 ///
@@ -40,7 +40,6 @@ impl<D: Drawable + Clone + 'static> OnEvent for Button<D> {
                         false if self.2 => events![event::Button::Pressed(false)],
                         false => vec![]
                     };
-
                     self.2 = false;
                     return result;
                 },
@@ -62,26 +61,24 @@ impl<D: Drawable + Clone + 'static> NumericalInput<D> {
 
 impl<D: Drawable + Clone + 'static> OnEvent for NumericalInput<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
-        if let Some(KeyboardEvent { state: KeyboardState::Pressed, key }) = event.downcast_ref::<KeyboardEvent>() {
-
+        if let Some(KeyboardEvent { state: KeyboardState::Pressed | KeyboardState::Repeated, key, .. }) = event.downcast_ref::<KeyboardEvent>() {
             match key {
-                Key::Named(NamedKey::Delete) => {
+                Key::Named(NamedKey::Delete | NamedKey::Backspace) => {
                     return events![event::NumericalInput::Delete];
                 }
                 Key::Character(c) => {
-                    if let Some(ch) = c.to_string().chars().next() {
-                        if ch.is_ascii_digit() { 
-                            return events![event::NumericalInput::Digit(ch)]
+                    if let Some(ch) = c.chars().next() {
+                        if ch.is_ascii_digit() {
+                            return events![event::NumericalInput::Digit(ch)];
                         }
-                        if matches!(ch, '.' | '/' | ':') { 
-                            return events![event::NumericalInput::Char(ch)]
+                        if matches!(ch, '.' | '/' | ':') {
+                            return events![event::NumericalInput::Char(ch)];
                         }
                     }
                 }
                 _ => {}
             }
         }
-
         vec![event]
     }
 }
@@ -107,7 +104,7 @@ impl<D: Drawable + Clone + 'static> OnEvent for Selectable<D> {
         } else if let Some(event::Selectable::Pressed(id, group_id)) = event.downcast_ref::<event::Selectable>()
         && *group_id == self.3.to_string() {
             let is = *id == self.2.to_string();
-            return vec![Box::new(event::Selectable::Selected(is))]
+            return vec![Box::new(event::Selectable::Selected(is))];
         }
         vec![event]
     }
@@ -127,7 +124,7 @@ impl<D: Drawable + Clone + 'static> Slider<D> {
 
 impl<D: Drawable + Clone + 'static> OnEvent for Slider<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
-        if let Some(MouseEvent { state, position, }) = event.downcast_ref::<MouseEvent>() {
+        if let Some(MouseEvent { state, position }) = event.downcast_ref::<MouseEvent>() {
             return match (state, position) {
                 (MouseState::Pressed, Some((x, _))) => {
                     self.2 = true;
@@ -137,8 +134,7 @@ impl<D: Drawable + Clone + 'static> OnEvent for Slider<D> {
                     self.2 = false;
                     Vec::new()
                 },
-                (MouseState::Scroll(..) | MouseState::Moved, Some((x, _)))
-                    if self.2 => {
+                (MouseState::Scroll(..) | MouseState::Moved, Some((x, _))) if self.2 => {
                     events![event::Slider::Moved(*x)]
                 }
                 _ => Vec::new()
@@ -159,45 +155,48 @@ impl<D: Drawable + Clone + 'static> OnEvent for Slider<D> {
 #[derive(Debug, Component, Clone)]
 pub struct TextInput<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] Option<bool>);
 impl<D: Drawable + Clone + 'static> TextInput<D> {
-    pub fn new(child: D, requires_focus: bool) -> Selectable<Self> {Selectable::new(TextInput(Stack::default(), child, requires_focus.then_some(false)), TEXT_INPUT_UUID)}
+    pub fn new(child: D, requires_focus: bool) -> Selectable<Self> {
+        Selectable::new(TextInput(Stack::default(), child, requires_focus.then_some(false)), TEXT_INPUT_UUID)
+    }
 }
 
 impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(event::Selectable::Selected(selected)) = event.downcast_ref::<event::Selectable>() {
-            if let Some(focus) = &mut self.2 {*focus = *selected;}
+            if let Some(focus) = &mut self.2 { *focus = *selected; }
             return vec![Box::new(event::TextInput::Focused(*selected)), event];
         } else if let Some(e) = event.downcast_ref::<MouseEvent>() {
             let mut events: Vec<Box<dyn Event>> = Vec::new();
-
             match e.state {
                 MouseState::Pressed if e.position.is_some() => {
-                    if let Some(focus) = &mut self.2 {*focus = true;}
+                    if let Some(focus) = &mut self.2 { *focus = true; }
                     events.push(Box::new(event::TextInput::Focused(true)));
                 }
-                MouseState::Pressed if e.position.is_none() && !crate::IS_MOBILE => { 
-                    if let Some(focus) = &mut self.2 {*focus = false;}
+                MouseState::Pressed if e.position.is_none() && !crate::IS_MOBILE => {
+                    if let Some(focus) = &mut self.2 { *focus = false; }
                     events.push(Box::new(event::TextInput::Focused(false)));
                 },
                 MouseState::Moved | MouseState::Scroll(..) if !crate::IS_MOBILE && !self.2.unwrap_or_default() => {
                     events.push(Box::new(event::TextInput::Hover(e.position.is_some())));
                 }
-                //     if !crate::IS_MOBILE && e.position.is_none() {
-                //         // true => events.push(Box::new(event::TextInput::Hover(true))),
-                //         events.push(Box::new(event::TextInput::Focused(false)));
-                //     }
-                // }
                 _ => {}
             }
-
             events.push(event);
             return events;
-        } else if let Some(KeyboardEvent { state: KeyboardState::Pressed, key }) = event.downcast_ref() {
+        } else if let Some(KeyboardEvent { state: KeyboardState::Pressed | KeyboardState::Repeated, key, modifiers }) = event.downcast_ref::<KeyboardEvent>() {
             let key = key.clone();
-            if let Some(focus) = self.2 {
-                return if focus { vec![event, Box::new(event::TextInput::Edited(key.clone()))] } else { Vec::new() };
+            let modifiers = *modifiers;
+
+            let focused = self.2.unwrap_or(true);
+            if !focused { return Vec::new(); }
+
+            // Always emit Edited for modifier combos so consumers can handle
+            // Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+Z, Ctrl+Shift+Z etc.
+            if modifiers.ctrl || modifiers.meta {
+                return vec![event, Box::new(event::TextInput::Edited(key))];
             }
-            return vec![event, Box::new(event::TextInput::Edited(key.clone()))];
+
+            return vec![event, Box::new(event::TextInput::Edited(key))];
         }
 
         vec![event]
@@ -215,16 +214,16 @@ impl<D: Drawable + Clone + PartialEq + 'static> Scrollable<D> {
 
 impl<D: Drawable + Clone + PartialEq + 'static> std::ops::Deref for Scrollable<D> {
     type Target = Momentum<D>;
-    fn deref(&self) -> &Self::Target {&self.1}
+    fn deref(&self) -> &Self::Target { &self.1 }
 }
 
 impl<D: Drawable + Clone + PartialEq + 'static> std::ops::DerefMut for Scrollable<D> {
-    fn deref_mut(&mut self) -> &mut Self::Target {&mut self.1}
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.1 }
 }
 
 impl<D: Drawable + Clone + PartialEq + 'static> OnEvent for Scrollable<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
-        if let Some(MouseEvent{position: Some(position), state}) = event.downcast_ref::<event::MouseEvent>() {
+        if let Some(MouseEvent { position: Some(position), state }) = event.downcast_ref::<event::MouseEvent>() {
             match state {
                 MouseState::Pressed => {
                     self.2 = *position;
@@ -232,15 +231,16 @@ impl<D: Drawable + Clone + PartialEq + 'static> OnEvent for Scrollable<D> {
                 },
                 MouseState::Released => {
                     if (position.1 - self.2.1).abs() < 5.0 {
-                        return vec![Box::new(MouseEvent{position: Some(*position), state: MouseState::Pressed}), Box::new(MouseEvent{position: Some(*position), state: MouseState::Released})];
+                        return vec![
+                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Pressed }),
+                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Released }),
+                        ];
                     }
-
                     return Vec::new();
                 }
                 _ => {}
             }
-        } 
-
+        }
         vec![event]
     }
 }
@@ -258,7 +258,7 @@ pub struct Momentum<D: Drawable + Clone + 'static> {
 }
 
 impl<D: Drawable + Clone + 'static> Momentum<D> {
-    pub fn new(child: D) -> Self { 
+    pub fn new(child: D) -> Self {
         Momentum {
             layout: Stack::default(),
             inner: child,
@@ -273,24 +273,23 @@ impl<D: Drawable + Clone + 'static> Momentum<D> {
 }
 
 impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
-    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
+    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if crate::IS_MOBILE {
-            if let Some(MouseEvent{position: Some(position), state}) = event.downcast_ref::<MouseEvent>() {
+            if let Some(MouseEvent { position: Some(position), state }) = event.downcast_ref::<MouseEvent>() {
                 match state {
                     MouseState::Pressed => {
                         self.scroll = Some(*position);
-                        self.scroll = Some(*position);
                         self.touching = true;
-                    }, 
+                    },
                     MouseState::Moved => {
                         self.mouse = *position;
-                    }, 
+                    },
                     MouseState::Released => {
                         self.touching = false;
                     },
                     MouseState::Scroll(..) => {
                         self.scroll = Some(*position);
-                    }, 
+                    },
                 }
                 self.mouse = *position;
             } else if event.downcast_ref::<TickEvent>().is_some() && !self.touching && let Some(time) = self.time {
@@ -314,11 +313,7 @@ impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
                 }
 
                 if let Some(speed) = self.speed {
-                    let state = (speed.abs() > 0.01).then_some(
-                        MouseState::Scroll(0.0, speed)
-                    );
-
-                    if let Some(s) = state {
+                    if let Some(s) = (speed.abs() > 0.01).then_some(MouseState::Scroll(0.0, speed)) {
                         ctx.send(Request::Event(Box::new(MouseEvent { position: Some(self.mouse), state: s })));
                     }
                 }
@@ -327,5 +322,3 @@ impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
         vec![event]
     }
 }
-
-
