@@ -216,8 +216,8 @@ impl Assets {
         RgbaImage::from_raw(size.0, size.1, rgba.into_raw()).unwrap()
     }
 
-    pub fn load_png(dir: &Dir, file: &str) -> Option<RgbaImage> {
+    pub fn load_image(dir: &Dir, file: &str) -> Option<RgbaImage> {
         let bytes = Assets::load_file(dir, file).expect("No file");
-        Some(image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).expect("No png").into_rgba8())
+        Some(image::load_from_memory(&bytes).expect("Unsupported or corrupt image").into_rgba8())
     }
 }
