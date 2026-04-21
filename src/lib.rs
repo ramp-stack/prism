@@ -1,14 +1,9 @@
-use std::sync::mpsc::Sender;
-use std::sync::mpsc::{Receiver, channel};
-use std::hash::{Hash, Hasher, DefaultHasher};
-use std::marker::PhantomData;
-use std::collections::VecDeque;
-use std::fmt::Debug;
-use std::sync::{Arc, Mutex};
+use std::path::{PathBuf, Path};
 
-use crate::layout::Stack;
-use crate::event::{OnEvent, Event, TickEvent};
-use crate::drawable::{Drawable, SizedTree, Component};
+pub use air::names::{Name, Id};
+pub use air::contract::{Contract, Reactant, Substance};
+
+use crate::event::Event;
 
 pub mod event;
 pub mod layout;
@@ -20,167 +15,68 @@ pub use wgpu_canvas as canvas;
 
 extern crate self as prism;
 
-pub enum Request {
-    Event(Box<dyn Event>),
-    Hardware(Hardware),
-    Service(String, String),
-    Listener(Box<dyn Fn(&mut State)>),
+pub trait Handler {
+    fn me(&mut self) -> Name;
+
+    fn create(&mut self, c_id: Id, hash: Id, bytes: Vec<u8>) -> Id;
+    fn share(&mut self, c_id: Id, id: Id, name: Name); 
+    fn send(&mut self, c_id: Id, id: Id, path: PathBuf, index: usize, bytes: Vec<u8>);
+    fn get(&mut self, c_id: Id, id: Id, path: PathBuf) -> Option<Substance>;
+
+    fn emit(&mut self, event: Box<dyn Event>);
+
+    fn start_camera(&mut self);
+    fn stop_camera(&mut self);
+    fn pick_photo(&mut self);
+
+    fn get_safe_area(&mut self) -> (f32, f32, f32, f32);
+    fn share_social(&mut self, data: String);
+
+    fn set_clipboard(&mut self, data: String);
+    fn get_clipboard(&mut self) -> String;
+
+    fn trigger_haptic(&mut self);
 }
 
-impl Request {
-    pub fn event(e: impl Event + 'static) -> Self {Request::Event(Box::new(e))}
-}
-
-#[derive(Debug)]
-pub struct FrameSettings {}
-
-#[derive(Debug)]
-pub enum Hardware {
-    GetCamera,
-    StopCamera,
-    GetSafeArea,
-    PhotoPicker,
-    SetClipboard(String),
-    GetClipboard,
-    SetCloud(String, String),
-    GetCloud(String),
-    Share(String),
-    Haptic,
-}
-
-anyanymap::Map!(State: );
-//implement btree from typeid to serde_json value. look things up by typeid then desereliazes
-
-pub struct StoredHash<T: Hash>(u64, PhantomData::<fn() -> T>);
-
-impl<T: Hash> Default for StoredHash<T> {
-    fn default() -> Self {
-        StoredHash(u64::default(), PhantomData)
-    }
-}
-
-type ListenerFn = Box<dyn Fn(&mut State)>;
-
-pub struct Instance {
-    receiver: Receiver<Request>,
-    listeners: Vec<ListenerFn>,
-    pub events: VecDeque<Box<dyn prism::event::Event>>,
-}
-
-impl Instance {
-    pub fn new(receiver: Receiver<Request>) -> Self {
-        Instance { receiver, listeners: vec![], events: VecDeque::new() }
-    }
-    pub fn add_listener(&mut self, listener: ListenerFn) {
-        self.listeners.push(listener);
-    }
-
-    pub fn tick(&mut self, ctx: &mut Context) {
-        self.listeners.iter().for_each(|l| (l)(&mut ctx.state));
-    }
-
-    pub fn handle_requests(&mut self) -> Option<Hardware> {
-        while let Ok(request) = self.receiver.try_recv() {
-            match request {
-                prism::Request::Listener(listener) => self.add_listener(listener),
-                prism::Request::Event(event) => self.events.push_back(event),
-                prism::Request::Hardware(hardware) => {return Some(hardware);},
-                // prism::Request::Hardware(hardware) => match hardware {
-                //     Hardware::SetClipboard(s) => 
-                //     _ => {}
-                // }
-                    // x => println!("Attempting to start {x:?}")
-                    //CameraStart,
-                    //CameraFrame(FrameSettings),
-                    //CameraStop,
-                    //PhotoPicker,
-                    //SetClipboard(String),
-                    //GetClipboard,
-                    //SetCloud(String, String),
-                    //GetCloud(String),
-                    //Share(String),
-                    //Haptic,
-                // },
-                _ => {}
-            }
-        }
-        None
-    }
-}
-
-/// There are three context actions which should be converted into serialized actions
-/// 1. Manipulate State where state is the only input and output
-/// 2. Send a request to the OS a Hardware or Service request
-/// 3. Send an event to be triggered
-pub struct Context {
-    state: State, // TODO: remove state from context and replace with sql
-    pub sender: Sender<Request>,
-}
-
+pub struct Context(Box<dyn Handler>);
 impl Context {
-    pub fn new() -> (Self, Receiver<Request>) {
-        let (sender, receiver) = channel();
-        (Context{state: State::default(), sender}, receiver)
+    pub fn new<H: Handler + 'static>(handler: H) -> Self {Context(Box::new(handler))}
+
+    pub fn me(&mut self) -> Name {self.0.me()}
+
+    pub fn create<C: Contract + 'static>(&mut self, contract: C) -> Id {
+        self.0.create(C::id(), Id::hash(&contract), contract.to_vec())
+    }
+    pub fn share<C: Contract>(&mut self, id: Id, name: Name) {self.0.share(C::id(), id, name)}
+    pub fn send<C: Contract, P: AsRef<Path>, R: Reactant + 'static>(&mut self, id: Id, path: P, reactant: R) -> Result<bool, R::Error> {
+        let mut beaker = self.get::<C, _>(id, &path).unwrap_or_default();
+        let index = R::index(&path);
+        let bytes = reactant.to_vec();
+        reactant.apply(path.as_ref(), self.me(), air::names::now(), &mut beaker)?;
+        Ok(match index {
+            Some(index) => {
+                self.0.send(C::id(), id, path.as_ref().to_path_buf(), index, bytes);
+                true
+            },
+            None => false
+        })
+    }
+    pub fn get<C: Contract, P: AsRef<Path>>(&mut self, id: Id, path: P) -> Option<Substance> {
+        self.0.get(C::id(), id, path.as_ref().to_path_buf())
     }
 
-    pub fn send(&mut self, request: Request) {
-        self.sender.send(request).expect("Issue with channel");
-    }
+    pub fn emit<E: Event>(&mut self, event: E) {self.0.emit(Box::new(event))}
 
-    pub fn register_listener<T: Hash + Clone + 'static>(&mut self) -> Receiver<T> {
-        let (sender, receiver) = channel();
-        let _ = self.sender.send(Request::Listener(Box::new(move |state: &mut State| {
-            let previous_hash = state.get_mut::<StoredHash<T>>().as_mut().map(|s| s.0).unwrap_or_default();
-            if let Some(t) = state.get::<T>() {
-                let mut hasher = DefaultHasher::new();
-                t.hash(&mut hasher);
-                let new_hash = hasher.finish();
-                if previous_hash != new_hash {
-                    let _ = sender.send(t.clone());
-                    state.get_mut_or_default::<StoredHash<T>>().0 = new_hash;
-                }
-            }
-        })));
-        receiver
-    }
-}
+    pub fn start_camera(&mut self) {self.0.start_camera()}
+    pub fn stop_camera(&mut self) {self.0.stop_camera()}
+    pub fn pick_photo(&mut self) {self.0.pick_photo()}
+    pub fn get_safe_area(&mut self) -> (f32, f32, f32, f32) {self.0.get_safe_area()}
+    pub fn share_social(&mut self, data: String) {self.0.share_social(data)}
 
-type UpdatedOn<D, T> = Arc<dyn Fn(&mut Context, &mut D, T) + Send + Sync + 'static>;
+    pub fn set_clipboard(&mut self, data: String) {self.0.set_clipboard(data);}
+    pub fn get_clipboard(&mut self) -> String {self.0.get_clipboard()}
 
-#[derive(Component, Clone)]
-pub struct Listener<D: Drawable + Clone, T: Hash + Clone + Debug + 'static> {
-    layout: Stack,
-    inner: D,
-    #[skip] receiver: Arc<Mutex<Receiver<T>>>,
-    #[skip] updated_on: UpdatedOn<D, T>,
-}
-
-impl<D: Drawable + Clone, T: Hash + Clone + Debug + 'static> Debug for Listener<D, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Listener").field("inner", &self.inner).finish()
-    }
-}
-
-impl<D: Drawable + Clone, T: Hash + Clone + Debug + 'static> OnEvent for Listener<D, T> {
-    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
-        if event.downcast_ref::<TickEvent>().is_some() 
-        && let Ok(receiver) = self.receiver.lock() 
-        && let Ok(val) = receiver.try_recv() {
-            (self.updated_on)(ctx, &mut self.inner, val)
-        }
-        vec![event]
-    }
-}
-
-impl<D: Drawable + Clone, T: Hash + Debug + Clone + 'static> Listener<D, T> {
-    pub fn new(ctx: &mut Context, inner: D, updated_on: impl Fn(&mut Context, &mut D, T) + Send + Sync + 'static) -> Self {
-        Listener{
-            layout: Stack::default(),
-            receiver: Arc::new(Mutex::new(ctx.register_listener::<T>())),
-            inner,
-            updated_on: Arc::new(updated_on)
-        }
-    }
+    pub fn trigger_haptic(&mut self) {self.0.trigger_haptic()}
 }
 
 

@@ -1,9 +1,10 @@
 use crate::layout::Area;
-use crate::Context;
+use crate::{Context, Contract, Id};
 use crate::drawable::SizedTree;
 
+use std::path::PathBuf;
+
 use std::fmt::Debug;
-use std::sync::Arc;
 use image::RgbaImage;
 
 use downcast_rs::{Downcast, impl_downcast};
@@ -210,15 +211,38 @@ pub enum Key {
     Character(String),
 }
 
-#[derive(Debug, Clone)]
-pub enum HardwareEvent {
-    Clipboard(String),
-    Camera(Arc<RgbaImage>),
-    SafeArea(f32, f32, f32, f32),
-}
-
-impl Event for HardwareEvent {
+#[derive(Clone, Debug)]
+pub struct CameraFrame(pub RgbaImage);
+impl Event for CameraFrame {
     fn pass(self: Box<Self>, _ctx: &mut Context, children: &[Area]) -> Vec<Option<Box<dyn Event>>> {
         children.iter().map(|_| Some(self.clone() as Box<dyn Event>)).collect()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PickedPhoto(pub RgbaImage);
+impl Event for PickedPhoto {
+    fn pass(self: Box<Self>, _ctx: &mut Context, children: &[Area]) -> Vec<Option<Box<dyn Event>>> {
+        children.iter().map(|_| Some(self.clone() as Box<dyn Event>)).collect()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Action {Replace, Add, Remove}
+
+pub struct Update<C: Contract>(pub Id, pub PathBuf, pub Action, std::marker::PhantomData::<fn(C)>);
+impl<C: Contract + 'static> Event for Update<C> {
+    fn pass(self: Box<Self>, _ctx: &mut Context, children: &[Area]) -> Vec<Option<Box<dyn Event>>> {
+        children.iter().map(|_| Some(self.clone() as Box<dyn Event>)).collect()
+    }
+}
+impl<C: Contract> Clone for Update<C> {
+    fn clone(&self) -> Self {
+        Update(self.0, self.1.clone(), self.2.clone(), std::marker::PhantomData::<fn(C)>)
+    }
+}
+impl<C: Contract> std::fmt::Debug for Update<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_tuple("Update").field(&self.0).field(&self.1).field(&self.2).finish()
     }
 }

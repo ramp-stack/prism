@@ -33,6 +33,7 @@ pub trait Drawable: DynClone + Debug + Any + Downcast {
     fn build(&self, size: Size, request: RequestTree) -> SizedTree {
         SizedTree(request.0.get(size), vec![])
     }
+
     fn draw(&self, sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)>;
 
     fn name(&self) -> String {std::any::type_name_of_val(self).to_string()}

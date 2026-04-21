@@ -7,7 +7,6 @@ repository = "https://github.com/ramp-stack/prism.git"
 description = "A GUI abstraction library for building UI kits"
 documentation = "https://docs.rs/prism2"
 
-
 [dependencies]
 anyanymap = "1.0.2"
 downcast-rs = "2.0.2"
@@ -19,3 +18,8 @@ image = "0.25.9"
 include_dir = "0.7.4"
 nsvg = "0.5.1"
 dyn-clone = "1.0.20"
+
+
+#maverick_os = { version = "0.3.7", optional = true }
+
+air = {path="../air"}

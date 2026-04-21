@@ -1,5 +1,5 @@
 use crate::event::{self, OnEvent, Key, NamedKey, Event, TickEvent, MouseEvent, MouseState, KeyboardEvent, KeyboardState};
-use crate::{events, Context, Request};
+use crate::{events, Context};
 use crate::drawable::{Drawable, Component, SizedTree};
 use crate::layout::Stack;
 use std::time::Duration;
@@ -103,7 +103,7 @@ impl<D: Drawable + Clone + 'static> Selectable<D> {
 impl<D: Drawable + Clone + 'static> OnEvent for Selectable<D> {
     fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if let Some(MouseEvent { state: MouseState::Pressed, position: Some(_) }) = event.downcast_ref::<MouseEvent>() {
-            ctx.send(Request::Event(Box::new(event::Selectable::Pressed(self.2.to_string(), self.3.to_string()))));
+            ctx.emit(event::Selectable::Pressed(self.2.to_string(), self.3.to_string()));
         } else if let Some(event::Selectable::Pressed(id, group_id)) = event.downcast_ref::<event::Selectable>()
         && *group_id == self.3.to_string() {
             let is = *id == self.2.to_string();
@@ -319,7 +319,7 @@ impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
                     );
 
                     if let Some(s) = state {
-                        ctx.send(Request::Event(Box::new(MouseEvent { position: Some(self.mouse), state: s })));
+                        ctx.emit(MouseEvent { position: Some(self.mouse), state: s });
                     }
                 }
             }
