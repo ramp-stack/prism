@@ -192,11 +192,7 @@ impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
 
             // Always emit Edited for modifier combos so consumers can handle
             // Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+Z, Ctrl+Shift+Z etc.
-            if modifiers.ctrl || modifiers.meta {
-                return vec![event, Box::new(event::TextInput::Edited(key))];
-            }
-
-            return vec![event, Box::new(event::TextInput::Edited(key))];
+            return vec![event, Box::new(event::TextInput::Edited(key, modifiers))];
         }
 
         vec![event]

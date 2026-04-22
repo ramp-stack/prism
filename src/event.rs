@@ -207,7 +207,7 @@ impl Event for Slider {
 pub enum TextInput {
     Hover(bool),
     Focused(bool),
-    Edited(Key),
+    Edited(Key, Modifiers),
 }
 
 impl Event for TextInput {

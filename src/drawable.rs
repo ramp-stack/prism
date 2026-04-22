@@ -31,7 +31,7 @@ pub trait Drawable: DynClone + Debug + Any + Downcast {
     }
     fn draw(&self, sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)>;
 
-    fn name(&self) -> String {std::any::type_name_of_val(self).to_string()}
+    fn name(&self) -> String { std::any::type_name_of_val(self).to_string() }
 
     fn event(&mut self, _ctx: &mut Context, _sized: &SizedTree, _event: Box<dyn Event>) {}
 }
@@ -40,14 +40,14 @@ clone_trait_object!(Drawable);
 impl_downcast!(Drawable);
 
 impl Drawable for Box<dyn Drawable> {
-    fn request_size(&self) -> RequestTree {Drawable::request_size(&**self)}
+    fn request_size(&self) -> RequestTree { Drawable::request_size(&**self) }
     fn build(&self, size: Size, request: RequestTree) -> SizedTree {
         Drawable::build(&**self, size, request)
     }
     fn draw(&self, sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
         Drawable::draw(&**self, sized, offset, bound)
     }
-    fn name(&self) -> String {Drawable::name(&**self)}
+    fn name(&self) -> String { Drawable::name(&**self) }
     fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {
         Drawable::event(&mut **self, ctx, sized, event)
     }
@@ -74,7 +74,7 @@ impl Drawable for Text {
         RequestTree(SizeRequest::fixed(self.size()), vec![])
     }
     fn draw(&self, _sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
-        vec![(CanvasArea{offset, bounds: Some(bound)}, CanvasItem::Text(self.clone()))]
+        vec![(CanvasArea { offset, bounds: Some(bound) }, CanvasItem::Text(self.clone()))]
     }
 }
 
@@ -83,7 +83,7 @@ impl Drawable for Shape {
         RequestTree(SizeRequest::fixed(self.shape.size()), vec![])
     }
     fn draw(&self, _sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
-        vec![(CanvasArea{offset, bounds: Some(bound)}, CanvasItem::Shape(*self))]
+        vec![(CanvasArea { offset, bounds: Some(bound) }, CanvasItem::Shape(*self))]
     }
 }
 
@@ -92,7 +92,7 @@ impl Drawable for Image {
         RequestTree(SizeRequest::fixed(self.shape.size()), vec![])
     }
     fn draw(&self, _sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
-        vec![(CanvasArea{offset, bounds: Some(bound)}, CanvasItem::Image(self.clone()))]
+        vec![(CanvasArea { offset, bounds: Some(bound) }, CanvasItem::Image(self.clone()))]
     }
 }
 
@@ -103,7 +103,16 @@ pub trait Component: Clone + Debug where Self: 'static {
 
     fn clipped(&self) -> bool { false }
 
+    /// Top-left of the clip rectangle in absolute screen space.
     fn clip_origin(&self) -> Option<Offset> { None }
+
+    /// Explicit size of the clip rectangle. When `Some((w, h))`, the clip
+    /// rect is `clip_origin .. clip_origin + (w, h)` regardless of where
+    /// `position` scrolls to. When `None`, falls back to `sized.0` (the
+    /// drawable's own laid-out size), which is correct for normal in-tree
+    /// components but wrong for imperatively-scrolled objects whose drawable
+    /// may be much taller than the visible container.
+    fn clip_size(&self) -> Option<Size> { None }
 }
 
 impl<C: Component + Clone + 'static + OnEvent> Drawable for C {
@@ -120,10 +129,10 @@ impl<C: Component + Clone + 'static + OnEvent> Drawable for C {
         SizedTree(
             size,
             self.layout().build(size, children).into_iter()
-            .zip(self.children()).zip(request.1)
-            .map(|((Area{offset, size}, child), branch)| {
-                (offset, child.build(size, branch))
-            }).collect()
+                .zip(self.children()).zip(request.1)
+                .map(|((Area { offset, size }, child), branch)| {
+                    (offset, child.build(size, branch))
+                }).collect()
         )
     }
 
@@ -131,11 +140,17 @@ impl<C: Component + Clone + 'static + OnEvent> Drawable for C {
         let bound = if self.clipped() {
             let clip_x = self.clip_origin().map(|o| o.0).unwrap_or(poffset.0);
             let clip_y = self.clip_origin().map(|o| o.1).unwrap_or(poffset.1);
+            // When clip_size is set, use it as the fixed container dimensions so
+            // that the clip rect stays stable even as the object's position scrolls.
+            // Without it we'd be using sized.0 which is the drawable's own (possibly
+            // very tall) size, not the container we actually want to clip to.
+            let clip_w = self.clip_size().map(|s| s.0).unwrap_or(sized.0.0);
+            let clip_h = self.clip_size().map(|s| s.1).unwrap_or(sized.0.1);
             (
                 bound.0.max(clip_x),
                 bound.1.max(clip_y),
-                bound.2.min(clip_x + sized.0.0),
-                bound.3.min(clip_y + sized.0.1),
+                bound.2.min(clip_x + clip_w),
+                bound.3.min(clip_y + clip_h),
             )
         } else {
             bound
@@ -163,10 +178,10 @@ impl<C: Component + Clone + 'static + OnEvent> Drawable for C {
     }
 
     fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {
-        let children = sized.1.iter().map(|(o, branch)| Area{offset: *o, size: branch.0}).collect::<Vec<_>>();
+        let children = sized.1.iter().map(|(o, branch)| Area { offset: *o, size: branch.0 }).collect::<Vec<_>>();
         for event in OnEvent::on_event(self, ctx, sized, event) {
             event.pass(ctx, &children).into_iter().zip(self.children_mut()).zip(sized.1.iter()).for_each(
-                |((e, child), branch)| if let Some(e) = e {child.event(ctx, &branch.1, e);}
+                |((e, child), branch)| if let Some(e) = e { child.event(ctx, &branch.1, e); }
             );
         }
     }
