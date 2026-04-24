@@ -1,7 +1,7 @@
 use std::path::{PathBuf, Path};
 
 pub use air::names::{Name, Id};
-pub use air::contract::{Contract, Reactant, Substance};
+pub use air::contract::{Contract, Reactant, Substance, RequestBuilder, Error, Request};
 
 use crate::event::Event;
 
@@ -18,12 +18,9 @@ extern crate self as prism;
 pub trait Handler {
     fn me(&mut self) -> Name;
 
-    fn create(&mut self, c_id: Id, hash: Id, bytes: Vec<u8>) -> Id;
-    fn share(&mut self, c_id: Id, id: Id, name: Name); 
-    fn send(&mut self, c_id: Id, id: Id, path: PathBuf, index: usize, bytes: Vec<u8>);
+    fn builder(&self) -> &RequestBuilder;
+    fn request(&mut self, request: Request);
     fn get(&mut self, c_id: Id, id: Id, path: PathBuf) -> Option<Substance>;
-
-    fn emit(&mut self, event: Box<dyn Event>);
 
     fn start_camera(&mut self);
     fn stop_camera(&mut self);
@@ -38,34 +35,35 @@ pub trait Handler {
     fn trigger_haptic(&mut self);
 }
 
-pub struct Context(Box<dyn Handler>);
+pub struct Context(Box<dyn Handler>, pub Vec<Box<dyn Event>>);
 impl Context {
-    pub fn new<H: Handler + 'static>(handler: H) -> Self {Context(Box::new(handler))}
+    pub fn new<H: Handler + 'static>(handler: H) -> Self {Context(Box::new(handler), Vec::new())}
 
     pub fn me(&mut self) -> Name {self.0.me()}
 
-    pub fn create<C: Contract + 'static>(&mut self, contract: C) -> Id {
-        self.0.create(C::id(), Id::hash(&contract), contract.to_vec())
-    }
-    pub fn share<C: Contract>(&mut self, id: Id, name: Name) {self.0.share(C::id(), id, name)}
-    pub fn send<C: Contract, P: AsRef<Path>, R: Reactant + 'static>(&mut self, id: Id, path: P, reactant: R) -> Result<bool, R::Error> {
-        let mut beaker = self.get::<C, _>(id, &path).unwrap_or_default();
-        let index = R::index(&path);
-        let bytes = reactant.to_vec();
-        reactant.apply(path.as_ref(), self.me(), air::names::now(), &mut beaker)?;
-        Ok(match index {
-            Some(index) => {
-                self.0.send(C::id(), id, path.as_ref().to_path_buf(), index, bytes);
-                true
-            },
-            None => false
-        })
-    }
-    pub fn get<C: Contract, P: AsRef<Path>>(&mut self, id: Id, path: P) -> Option<Substance> {
-        self.0.get(C::id(), id, path.as_ref().to_path_buf())
+    pub fn get<C: Contract, P: AsRef<Path>>(&mut self, iid: &Id, path: P) -> Option<Substance> {
+        self.0.get(C::id(), *iid, path.as_ref().to_path_buf())
     }
 
-    pub fn emit<E: Event>(&mut self, event: E) {self.0.emit(Box::new(event))}
+    pub fn create<C: Contract>(&mut self, contract: C) -> Result<Id, Error> {
+        let (id, request) = self.0.builder().create(contract)?;
+        self.0.request(request);
+        Ok(id)
+    }
+
+    pub fn share<C: Contract>(&mut self, iid: Id, name: Name) -> Result<(), Error> {
+        let request = self.0.builder().share::<C>(iid, name)?;
+        self.0.request(request);
+        Ok(())
+    }
+
+    pub fn send<P: AsRef<Path>, R: Reactant + 'static>(&mut self, id: Id, path: P, reactant: R) -> Result<Result<(), R::Error>, Error> {
+        let request = self.0.builder().send(id, path, reactant)?;
+        self.0.request(request);
+        Ok(Ok(()))
+    }
+
+    pub fn emit<E: Event>(&mut self, event: E) {self.1.push(Box::new(event))}
 
     pub fn start_camera(&mut self) {self.0.start_camera()}
     pub fn stop_camera(&mut self) {self.0.stop_camera()}
@@ -95,10 +93,10 @@ pub const IS_WEB: bool = false;
 use image::RgbaImage;
 use include_dir::{DirEntry, Dir};
 
-pub struct Assets;
+pub struct Assets(pub Dir<'static>);
 impl Assets {
-    pub fn load_file(dir: &Dir, file: &str) -> Option<Vec<u8>> {
-        dir.entries().iter().find_map(|e| match e {
+    pub fn load_file(&self, file: &str) -> Option<Vec<u8>> {
+        self.0.entries().iter().find_map(|e| match e {
             DirEntry::File(f) => (f.path().to_str().unwrap().to_lowercase() == file.to_lowercase()).then_some(f.contents().to_vec()),
             _ => None,
         })
@@ -112,8 +110,8 @@ impl Assets {
         RgbaImage::from_raw(size.0, size.1, rgba.into_raw()).unwrap()
     }
 
-    pub fn load_image(dir: &Dir, file: &str) -> Option<RgbaImage> {
-        let bytes = Assets::load_file(dir, file).expect("No file");
+    pub fn load_image(&self, file: &str) -> Option<RgbaImage> {
+        let bytes = Assets::load_file(self, file).expect("No file");
         Some(image::load_from_memory(&bytes).expect("Unsupported or corrupt image").into_rgba8())
     }
 }
