@@ -30,7 +30,7 @@ pub trait Handler {
     fn share_social(&mut self, data: String);
 
     fn set_clipboard(&mut self, data: String);
-    fn get_clipboard(&mut self) -> String;
+    fn get_clipboard(&mut self) -> Option<String>;
 
     fn trigger_haptic(&mut self);
 }
@@ -72,7 +72,7 @@ impl Context {
     pub fn share_social(&mut self, data: String) {self.0.share_social(data)}
 
     pub fn set_clipboard(&mut self, data: String) {self.0.set_clipboard(data);}
-    pub fn get_clipboard(&mut self) -> String {self.0.get_clipboard()}
+    pub fn get_clipboard(&mut self) -> Option<String> {self.0.get_clipboard()}
 
     pub fn trigger_haptic(&mut self) {self.0.trigger_haptic()}
 }
