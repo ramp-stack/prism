@@ -14,11 +14,7 @@ pub trait OnEvent {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {vec![event]}
 }
 
-//Function for event to decide on weather to pass the event to a child, Event can also be modified for the child
-/// Implement the `Event` trait to allow a structure to be used in an event query.
 pub trait Event: Debug + Downcast {
-    /// Optionally return a clone to continue passing the event to children,
-    /// or `None` to stop propagation. Can also modify the event before passing it on.
     fn pass(
         self: Box<Self>,
         _ctx: &mut Context,
@@ -27,21 +23,50 @@ pub trait Event: Debug + Downcast {
 }
 impl_downcast!(Event);
 
+/// Which mouse button was involved in a [`MouseState::Pressed`] or [`MouseState::Released`] event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
 
 /// Represents the different states of the mouse in a [`MouseEvent`].
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum MouseState { 
-    /// The mouse button was pressed.
-    Pressed, 
+pub enum MouseState {
+    /// A mouse button was pressed. Carries which button.
+    Pressed(MouseButton),
     /// The mouse was moved.
-    Moved, 
-    /// The mouse button was released.
-    Released,
+    Moved,
+    /// A mouse button was released. Carries which button.
+    Released(MouseButton),
     /// The mouse was scrolled.
-    /// 
+    ///
     /// The first value is the horizontal scroll amount (x-axis),
     /// and the second value is the vertical scroll amount (y-axis).
-    Scroll(f32, f32), 
+    Scroll(f32, f32),
+}
+
+impl MouseState {
+    /// Returns true if this is a left-button press.
+    pub fn is_left_press(&self) -> bool {
+        matches!(self, MouseState::Pressed(MouseButton::Left))
+    }
+
+    /// Returns true if this is a right-button press.
+    pub fn is_right_press(&self) -> bool {
+        matches!(self, MouseState::Pressed(MouseButton::Right))
+    }
+
+    /// Returns true if this is any button press.
+    pub fn is_press(&self) -> bool {
+        matches!(self, MouseState::Pressed(_))
+    }
+
+    /// Returns true if this is any button release.
+    pub fn is_release(&self) -> bool {
+        matches!(self, MouseState::Released(_))
+    }
 }
 
 /// Represents the state of a keyboard key in a [`KeyboardEvent`].
@@ -93,10 +118,24 @@ impl Modifiers {
 /// # Mouse Event
 ///
 /// `MouseEvent` is triggered whenever the [`MouseState`] changes.
-/// 
-/// - `position`: The mouse position at the time of the event.  
-///   A component receives `Some(position)` only if the event occurred over it;  
+///
+/// - `position`: The mouse position at the time of the event.
+///   A component receives `Some(position)` only if the event occurred over it;
 ///   otherwise, it will be `None`.
+///
+/// # Right-click / trackpad secondary tap
+///
+/// Trackpad two-finger tap and physical right-click both arrive as
+/// `MouseState::Pressed(MouseButton::Right)`. Match on the button to
+/// distinguish them from left clicks:
+///
+/// ```rust
+/// if let Some(MouseEvent { state: MouseState::Pressed(MouseButton::Right), position: Some(pos) })
+///     = event.downcast_ref::<MouseEvent>()
+/// {
+///     // show context menu at pos
+/// }
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MouseEvent {
     pub position: Option<(f32, f32)>,
@@ -125,7 +164,7 @@ impl Event for MouseEvent {
 /// # Keyboard Event
 ///
 /// `KeyboardEvent` is triggered whenever the [`KeyboardState`] changes.
-/// 
+///
 /// - `key`: The [`Key`] that triggered the event.
 /// - `modifiers`: The modifier keys held at the time of the event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,7 +215,7 @@ impl Event for Button {
     }
 }
 
-/// Events emitted by the [`Selectable`](crate::emitters::Selectable) emmiter object.
+/// Events emitted by the [`Selectable`](crate::emitters::Selectable) emitter object.
 #[derive(Debug, Clone)]
 pub enum Selectable {
     Pressed(String, String),
@@ -189,7 +228,7 @@ impl Event for Selectable {
     }
 }
 
-/// Events emitted by the [`Slider`](crate::emitters::Slider) emmiter object.
+/// Events emitted by the [`Slider`](crate::emitters::Slider) emitter object.
 #[derive(Debug, Clone, Copy)]
 pub enum Slider {
     Start(f32),
@@ -202,7 +241,7 @@ impl Event for Slider {
     }
 }
 
-/// Events emitted by the [`TextInput`](crate::emitters::TextInput) emmiter object.
+/// Events emitted by the [`TextInput`](crate::emitters::TextInput) emitter object.
 #[derive(Debug, Clone)]
 pub enum TextInput {
     Hover(bool),
@@ -230,9 +269,8 @@ impl Event for NumericalInput {
 }
 
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum NamedKey {
-    // Navigation
     Enter,
     Tab,
     Space,
@@ -251,7 +289,7 @@ pub enum NamedKey {
     Shift,
     Control,
     Alt,
-    Meta, 
+    Meta,
     CapsLock,
     NumLock,
     ScrollLock,
@@ -267,18 +305,6 @@ pub enum NamedKey {
     F10,
     F11,
     F12,
-    MediaPlay,
-    MediaPause,
-    MediaPlayPause,
-    MediaStop,
-    MediaNextTrack,
-    MediaPrevTrack,
-    VolumeUp,
-    VolumeDown,
-    VolumeMute,
-    PrintScreen,
-    Pause,
-    ContextMenu,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

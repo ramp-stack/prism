@@ -103,15 +103,9 @@ pub trait Component: Clone + Debug where Self: 'static {
 
     fn clipped(&self) -> bool { false }
 
-    /// Top-left of the clip rectangle in absolute screen space.
     fn clip_origin(&self) -> Option<Offset> { None }
 
-    /// Explicit size of the clip rectangle. When `Some((w, h))`, the clip
-    /// rect is `clip_origin .. clip_origin + (w, h)` regardless of where
-    /// `position` scrolls to. When `None`, falls back to `sized.0` (the
-    /// drawable's own laid-out size), which is correct for normal in-tree
-    /// components but wrong for imperatively-scrolled objects whose drawable
-    /// may be much taller than the visible container.
+    
     fn clip_size(&self) -> Option<Size> { None }
 }
 
@@ -140,10 +134,6 @@ impl<C: Component + Clone + 'static + OnEvent> Drawable for C {
         let bound = if self.clipped() {
             let clip_x = self.clip_origin().map(|o| o.0).unwrap_or(poffset.0);
             let clip_y = self.clip_origin().map(|o| o.1).unwrap_or(poffset.1);
-            // When clip_size is set, use it as the fixed container dimensions so
-            // that the clip rect stays stable even as the object's position scrolls.
-            // Without it we'd be using sized.0 which is the drawable's own (possibly
-            // very tall) size, not the container we actually want to clip to.
             let clip_w = self.clip_size().map(|s| s.0).unwrap_or(sized.0.0);
             let clip_h = self.clip_size().map(|s| s.1).unwrap_or(sized.0.1);
             (

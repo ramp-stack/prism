@@ -1,4 +1,4 @@
-use crate::event::{self, OnEvent, Key, NamedKey, Event, TickEvent, MouseEvent, MouseState, KeyboardEvent, KeyboardState, Modifiers};
+use crate::event::{self, OnEvent, Key, NamedKey, Event, TickEvent, MouseEvent, MouseState, MouseButton, KeyboardEvent, KeyboardState, Modifiers};
 use crate::{events, Context, Request};
 use crate::drawable::{Drawable, Component, SizedTree};
 use crate::layout::Stack;
@@ -9,13 +9,13 @@ const TEXT_INPUT_UUID: uuid::Uuid = uuid::uuid!("123e4567-e89b-12d3-a456-4266141
 /// The [`Button`] emitter wraps a drawable component
 /// and converts mouse input into a small set of semantic button states:
 ///
-/// - [`Button::Pressed(true)`](crate::event::Button::Pressed) — when the mouse is pressed within the button's bounds.
-/// - [`Button::Pressed(false)`](crate::event::Button::Pressed) — when the mouse is pressed outside the button's bounds.
+/// - [`Button::Pressed(true)`](crate::event::Button::Pressed) — when the left mouse button is pressed within bounds.
+/// - [`Button::Pressed(false)`](crate::event::Button::Pressed) — when the left mouse button is released.
 /// - [`Button::Hover(true)`](crate::event::Button::Hover) — when the mouse moves over the button.
 /// - [`Button::Hover(false)`](crate::event::Button::Hover) — when the mouse leaves the button.
 ///
-/// This allows components to react to common button states without manually handling raw input.
-///
+/// Right-click and middle-click pass through unchanged so parent components
+/// can handle context menus or other secondary actions.
 #[derive(Debug, Component, Clone)]
 pub struct Button<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] bool);
 impl<D: Drawable + Clone + 'static> Button<D> {
@@ -23,17 +23,19 @@ impl<D: Drawable + Clone + 'static> Button<D> {
 }
 
 impl<D: Drawable + Clone + 'static> OnEvent for Button<D> {
-    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
+    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(event) = event.downcast_ref::<MouseEvent>() {
             match event.state {
-                MouseState::Pressed if event.position.is_some() => {
+                // Only left-click triggers Pressed(true)
+                MouseState::Pressed(MouseButton::Left) if event.position.is_some() => {
                     self.2 = true;
                     return events![event::Button::Pressed(true)];
                 },
                 MouseState::Moved | MouseState::Scroll(..) if !crate::IS_MOBILE => {
                     return events![event::Button::Hover(event.position.is_some())];
                 },
-                MouseState::Released => {
+                // Only release of a left-click triggers Pressed(false)
+                MouseState::Released(MouseButton::Left) => {
                     let result = match !crate::IS_MOBILE && event.position.is_some() {
                         true if self.2 => events![event::Button::Pressed(false), event::Button::Hover(true)],
                         true => events![event::Button::Hover(true)],
@@ -43,6 +45,7 @@ impl<D: Drawable + Clone + 'static> OnEvent for Button<D> {
                     self.2 = false;
                     return result;
                 },
+                // Right/middle clicks and other states pass through unchanged
                 _ => {}
             }
         }
@@ -83,13 +86,9 @@ impl<D: Drawable + Clone + 'static> OnEvent for NumericalInput<D> {
     }
 }
 
-/// The [`Selectable`] emitter allows one item in a group to be active at a time. 
-/// When pressed, it emits an event with its unique ID and group ID, 
-/// allowing other components in the same group to update their state accordingly.
-///
-/// - [`Selectable::Pressed(id, group_id)`](crate::event::Selectable::Pressed) - when this element was pressed,
-/// - [`Selectable::Selected(true)`](crate::event::Selectable::Selected) - when this element was selected,
-/// - [`Selectable::Selected(false)`](crate::event::Selectable::Selected) - when another item in the same group was selected.
+/// The [`Selectable`] emitter allows one item in a group to be active at a time.
+/// Only left-clicks trigger selection — right-clicks pass through so parent
+/// components can show context menus without accidentally changing selection.
 #[derive(Debug, Component, Clone)]
 pub struct Selectable<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] uuid::Uuid, #[skip] uuid::Uuid);
 impl<D: Drawable + Clone + 'static> Selectable<D> {
@@ -98,8 +97,8 @@ impl<D: Drawable + Clone + 'static> Selectable<D> {
     }
 }
 impl<D: Drawable + Clone + 'static> OnEvent for Selectable<D> {
-    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
-        if let Some(MouseEvent { state: MouseState::Pressed, position: Some(_) }) = event.downcast_ref::<MouseEvent>() {
+    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+        if let Some(MouseEvent { state: MouseState::Pressed(MouseButton::Left), position: Some(_) }) = event.downcast_ref::<MouseEvent>() {
             ctx.send(Request::Event(Box::new(event::Selectable::Pressed(self.2.to_string(), self.3.to_string()))));
         } else if let Some(event::Selectable::Pressed(id, group_id)) = event.downcast_ref::<event::Selectable>()
         && *group_id == self.3.to_string() {
@@ -113,9 +112,11 @@ impl<D: Drawable + Clone + 'static> OnEvent for Selectable<D> {
 /// The [`Slider`] emitter wraps a drawable component
 /// and converts mouse input into a small set of semantic slider states:
 ///
-/// - [`Slider::Start(x)`](crate::event::Slider::Start) — when the user clicks or begins dragging.
-/// - [`Slider::Moved(x)`](crate::event::Slider::Moved) — while dragging with the mouse pressed.
+/// - [`Slider::Start(x)`](crate::event::Slider::Start) — when the user left-clicks or begins dragging.
+/// - [`Slider::Moved(x)`](crate::event::Slider::Moved) — while dragging with the left button pressed.
 /// - Automatically stops tracking when released.
+///
+/// Right-click passes through unchanged.
 #[derive(Debug, Component, Clone)]
 pub struct Slider<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] bool);
 impl<D: Drawable + Clone + 'static> Slider<D> {
@@ -123,35 +124,27 @@ impl<D: Drawable + Clone + 'static> Slider<D> {
 }
 
 impl<D: Drawable + Clone + 'static> OnEvent for Slider<D> {
-    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
+    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(MouseEvent { state, position }) = event.downcast_ref::<MouseEvent>() {
             return match (state, position) {
-                (MouseState::Pressed, Some((x, _))) => {
+                (MouseState::Pressed(MouseButton::Left), Some((x, _))) => {
                     self.2 = true;
                     events![event::Slider::Start(*x)]
                 },
-                (MouseState::Released, _) => {
+                (MouseState::Released(MouseButton::Left), _) => {
                     self.2 = false;
                     Vec::new()
                 },
                 (MouseState::Scroll(..) | MouseState::Moved, Some((x, _))) if self.2 => {
                     events![event::Slider::Moved(*x)]
                 }
-                _ => Vec::new()
+                _ => return vec![event],
             };
         }
         vec![event]
     }
 }
 
-/// The [`TextInput`] emitter wraps a drawable component
-/// and converts raw input into a small set of semantic text input states:
-///
-/// - [`TextInput::Focused(true)`](crate::event::TextInput::Focused) — when focused (clicked inside bounds).
-/// - [`TextInput::Focused(false)`](crate::event::TextInput::Focused) — when unfocused (clicked outside bounds).
-/// - [`TextInput::Hover(true)`](crate::event::TextInput::Hover) — when the mouse hovers over the input.
-/// - [`TextInput::Hover(false)`](crate::event::TextInput::Hover) — when the mouse leaves the input.
-/// - Passes keyboard events through only when focused.
 #[derive(Debug, Component, Clone)]
 pub struct TextInput<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] Option<bool>);
 impl<D: Drawable + Clone + 'static> TextInput<D> {
@@ -168,11 +161,11 @@ impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
         } else if let Some(e) = event.downcast_ref::<MouseEvent>() {
             let mut events: Vec<Box<dyn Event>> = Vec::new();
             match e.state {
-                MouseState::Pressed if e.position.is_some() => {
+                MouseState::Pressed(MouseButton::Left) if e.position.is_some() => {
                     if let Some(focus) = &mut self.2 { *focus = true; }
                     events.push(Box::new(event::TextInput::Focused(true)));
                 }
-                MouseState::Pressed if e.position.is_none() && !crate::IS_MOBILE => {
+                MouseState::Pressed(MouseButton::Left) if e.position.is_none() && !crate::IS_MOBILE => {
                     if let Some(focus) = &mut self.2 { *focus = false; }
                     events.push(Box::new(event::TextInput::Focused(false)));
                 },
@@ -190,8 +183,6 @@ impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
             let focused = self.2.unwrap_or(true);
             if !focused { return Vec::new(); }
 
-            // Always emit Edited for modifier combos so consumers can handle
-            // Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+Z, Ctrl+Shift+Z etc.
             return vec![event, Box::new(event::TextInput::Edited(key, modifiers))];
         }
 
@@ -221,15 +212,15 @@ impl<D: Drawable + Clone + PartialEq + 'static> OnEvent for Scrollable<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(MouseEvent { position: Some(position), state }) = event.downcast_ref::<event::MouseEvent>() {
             match state {
-                MouseState::Pressed => {
+                MouseState::Pressed(MouseButton::Left) => {
                     self.2 = *position;
                     return Vec::new();
                 },
-                MouseState::Released => {
+                MouseState::Released(MouseButton::Left) => {
                     if (position.1 - self.2.1).abs() < 5.0 {
                         return vec![
-                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Pressed }),
-                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Released }),
+                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Pressed(MouseButton::Left) }),
+                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Released(MouseButton::Left) }),
                         ];
                     }
                     return Vec::new();
@@ -273,14 +264,14 @@ impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
         if crate::IS_MOBILE {
             if let Some(MouseEvent { position: Some(position), state }) = event.downcast_ref::<MouseEvent>() {
                 match state {
-                    MouseState::Pressed => {
+                    MouseState::Pressed(_) => {
                         self.scroll = Some(*position);
                         self.touching = true;
                     },
                     MouseState::Moved => {
                         self.mouse = *position;
                     },
-                    MouseState::Released => {
+                    MouseState::Released(_) => {
                         self.touching = false;
                     },
                     MouseState::Scroll(..) => {
