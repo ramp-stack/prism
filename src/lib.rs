@@ -16,48 +16,48 @@ pub use wgpu_canvas as canvas;
 extern crate self as prism;
 
 pub trait Handler {
-    fn me(&mut self) -> Name;
+    fn me(&self) -> Name;
 
     fn builder(&self) -> &RequestBuilder;
-    fn request(&mut self, request: Request);
-    fn get(&mut self, c_id: Id, id: Id, path: PathBuf) -> Option<Substance>;
+    fn request(&self, request: Request);
+    fn get(&self, c_id: Id, id: Id, path: PathBuf) -> Option<Substance>;
 
-    fn start_camera(&mut self);
-    fn stop_camera(&mut self);
-    fn pick_photo(&mut self);
+    fn start_camera(&self);
+    fn stop_camera(&self);
+    fn pick_photo(&self);
 
-    fn get_safe_area(&mut self) -> (f32, f32, f32, f32);
-    fn share_social(&mut self, data: String);
+    fn get_safe_area(&self) -> (f32, f32, f32, f32);
+    fn share_social(&self, data: String);
 
-    fn set_clipboard(&mut self, data: String);
-    fn get_clipboard(&mut self) -> Option<String>;
+    fn set_clipboard(&self, data: String);
+    fn get_clipboard(&self) -> Option<String>;
 
-    fn trigger_haptic(&mut self);
+    fn trigger_haptic(&self);
 }
 
 pub struct Context(Box<dyn Handler>, pub Vec<Box<dyn Event>>);
 impl Context {
     pub fn new<H: Handler + 'static>(handler: H) -> Self {Context(Box::new(handler), Vec::new())}
 
-    pub fn me(&mut self) -> Name {self.0.me()}
+    pub fn me(&self) -> Name {self.0.me()}
 
-    pub fn get<C: Contract, P: AsRef<Path>>(&mut self, iid: &Id, path: P) -> Option<Substance> {
+    pub fn get<C: Contract, P: AsRef<Path>>(&self, iid: &Id, path: P) -> Option<Substance> {
         self.0.get(C::id(), *iid, path.as_ref().to_path_buf())
     }
 
-    pub fn create<C: Contract>(&mut self, contract: C) -> Result<Id, Error> {
+    pub fn create<C: Contract>(&self, contract: C) -> Result<Id, Error> {
         let (id, request) = self.0.builder().create(contract)?;
         self.0.request(request);
         Ok(id)
     }
 
-    pub fn share<C: Contract>(&mut self, iid: Id, name: Name) -> Result<(), Error> {
+    pub fn share<C: Contract>(&self, iid: Id, name: Name) -> Result<(), Error> {
         let request = self.0.builder().share::<C>(iid, name)?;
         self.0.request(request);
         Ok(())
     }
 
-    pub fn send<P: AsRef<Path>, R: Reactant + 'static>(&mut self, id: Id, path: P, reactant: R) -> Result<Result<(), R::Error>, Error> {
+    pub fn send<P: AsRef<Path>, R: Reactant + 'static>(&self, id: Id, path: P, reactant: R) -> Result<Result<(), R::Error>, Error> {
         let request = self.0.builder().send(id, path, reactant)?;
         self.0.request(request);
         Ok(Ok(()))
@@ -65,16 +65,16 @@ impl Context {
 
     pub fn emit<E: Event>(&mut self, event: E) {self.1.push(Box::new(event))}
 
-    pub fn start_camera(&mut self) {self.0.start_camera()}
-    pub fn stop_camera(&mut self) {self.0.stop_camera()}
-    pub fn pick_photo(&mut self) {self.0.pick_photo()}
-    pub fn get_safe_area(&mut self) -> (f32, f32, f32, f32) {self.0.get_safe_area()}
-    pub fn share_social(&mut self, data: String) {self.0.share_social(data)}
+    pub fn start_camera(&self) {self.0.start_camera()}
+    pub fn stop_camera(&self) {self.0.stop_camera()}
+    pub fn pick_photo(&self) {self.0.pick_photo()}
+    pub fn get_safe_area(&self) -> (f32, f32, f32, f32) {self.0.get_safe_area()}
+    pub fn share_social(&self, data: String) {self.0.share_social(data)}
 
-    pub fn set_clipboard(&mut self, data: String) {self.0.set_clipboard(data);}
-    pub fn get_clipboard(&mut self) -> Option<String> {self.0.get_clipboard()}
+    pub fn set_clipboard(&self, data: String) {self.0.set_clipboard(data);}
+    pub fn get_clipboard(&self) -> Option<String> {self.0.get_clipboard()}
 
-    pub fn trigger_haptic(&mut self) {self.0.trigger_haptic()}
+    pub fn trigger_haptic(&self) {self.0.trigger_haptic()}
 }
 
 
