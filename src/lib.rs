@@ -20,6 +20,7 @@ pub trait Handler {
 
     fn builder(&self) -> &RequestBuilder;
     fn request(&self, request: Request);
+    fn list(&self, c_id: Id) -> Vec<Id>;
     fn get(&self, c_id: Id, id: Id, path: PathBuf) -> Option<Substance>;
 
     fn start_camera(&self);
@@ -44,6 +45,8 @@ impl Context {
     pub fn get<C: Contract, P: AsRef<Path>>(&self, iid: &Id, path: P) -> Option<Substance> {
         self.0.get(C::id(), *iid, path.as_ref().to_path_buf())
     }
+
+    fn list<C: Contract>(&self) -> Vec<Id> {self.0.list(C::id())}
 
     pub fn create<C: Contract>(&self, contract: C) -> Result<Id, Error> {
         let (id, request) = self.0.builder().create(contract)?;
