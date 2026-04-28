@@ -46,7 +46,7 @@ impl Context {
         self.0.get(C::id(), *iid, path.as_ref().to_path_buf())
     }
 
-    fn list<C: Contract>(&self) -> Vec<Id> {self.0.list(C::id())}
+    pub fn list<C: Contract>(&self) -> Vec<Id> {self.0.list(C::id())}
 
     pub fn create<C: Contract>(&self, contract: C) -> Result<Id, Error> {
         let (id, request) = self.0.builder().create(contract)?;
