@@ -62,18 +62,17 @@ impl<D: Drawable + Clone + 'static> NumericalInput<D> {
 
 impl<D: Drawable + Clone + 'static> OnEvent for NumericalInput<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
-        if let Some(KeyboardEvent { state: KeyboardState::Pressed, key }) = event.downcast_ref::<KeyboardEvent>() {
-
+        if let Some(KeyboardEvent { state: KeyboardState::Pressed, key, .. }) = event.downcast_ref::<KeyboardEvent>() {
             match key {
-                Key::Named(NamedKey::Delete) => {
+                Key::Named(NamedKey::Delete | NamedKey::Backspace) => {
                     return events![event::NumericalInput::Delete];
                 }
                 Key::Character(c) => {
                     if let Some(ch) = c.to_string().chars().next() {
-                        if ch.is_ascii_digit() { 
+                        if ch.is_ascii_digit() {
                             return events![event::NumericalInput::Digit(ch)]
                         }
-                        if matches!(ch, '.' | '/' | ':') { 
+                        if matches!(ch, '.' | '/' | ':') {
                             return events![event::NumericalInput::Char(ch)]
                         }
                     }
@@ -192,7 +191,7 @@ impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
 
             events.push(event);
             return events;
-        } else if let Some(KeyboardEvent { state: KeyboardState::Pressed, key }) = event.downcast_ref() {
+        } else if let Some(KeyboardEvent { state: KeyboardState::Pressed, key, .. }) = event.downcast_ref() {
             let key = key.clone();
             if let Some(focus) = self.2 {
                 return if focus { vec![event, Box::new(event::TextInput::Edited(key.clone()))] } else { Vec::new() };

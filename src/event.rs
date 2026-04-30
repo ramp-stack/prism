@@ -28,8 +28,6 @@ pub trait Event: Debug + Downcast {
 }
 impl_downcast!(Event);
 
-
-/// Represents the different states of the mouse in a [`MouseEvent`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MouseState { 
     /// The mouse button was pressed.
@@ -54,6 +52,14 @@ pub enum KeyboardState {
     Repeated,
     /// A key was released.
     Released,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub control: bool,
+    pub alt: bool,
+    pub meta: bool,
 }
 
 /// # Mouse Event
@@ -97,6 +103,7 @@ impl Event for MouseEvent {
 pub struct KeyboardEvent {
     pub key: Key,
     pub state: KeyboardState,
+    pub modifiers: Modifiers,
 }
 
 impl Event for KeyboardEvent {
@@ -104,6 +111,7 @@ impl Event for KeyboardEvent {
         children.iter().map(|_| Some(self.clone() as Box<dyn Event>)).collect()
     }
 }
+
 /// # Tick Event
 ///
 /// `TickEvent` is emitted on every tick and can be used to perform continuous or repeated actions.
@@ -203,6 +211,16 @@ pub enum NamedKey {
     ArrowRight,
     ArrowUp,
     Delete,
+    Backspace,
+    Home,
+    End,
+    Shift,
+    Control,
+    Alt,
+    Meta,
+    CapsLock,
+    NumLock,
+    ScrollLock,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
