@@ -1,9 +1,13 @@
 use std::path::{PathBuf, Path};
+use std::fmt::Debug;
+use std::any::Any;
 
 pub use air::names::{Name, Id};
 pub use air::contract::{Contract, Reactant, Substance, RequestBuilder, Error, Request};
 
-use crate::event::Event;
+use event::{Event, TickEvent};
+use drawable::{Drawable, RequestTree, SizedTree};
+use canvas::{Area, Item};
 
 pub mod event;
 pub mod layout;
@@ -15,30 +19,47 @@ pub use wgpu_canvas as canvas;
 
 extern crate self as prism;
 
+pub const IS_MOBILE: bool = cfg!(any(target_os = "ios", target_os = "android"));
+pub const IS_WEB: bool = cfg!(target_arch = "wasm32");
+
+///A handler trait for a Camera, It is assumed that CameraFrame events will be emmited for as long
+///as one of these Handlers exists.
+pub trait Camera: Any + Debug {fn clone_camera(&self) -> Box<dyn Camera>;}
+impl<C: Any + Debug + Clone> Camera for C {
+    fn clone_camera(&self) -> Box<dyn Camera> {Box::new(self.clone())}
+}
+impl Clone for Box<dyn Camera> {fn clone(&self) -> Self {(**self).clone_camera()}}
+
 pub trait Handler {
     fn me(&self) -> Name;
 
+    ///TODO: remove
     fn builder(&self) -> &RequestBuilder;
-    fn request(&self, request: Request);
+    fn request(&mut self, request: Request);
     fn list(&self, c_id: Id) -> Vec<Id>;
     fn get(&self, c_id: Id, id: Id, path: PathBuf) -> Option<Substance>;
 
-    fn start_camera(&self);
-    fn stop_camera(&self);
-    fn pick_photo(&self);
+    fn start_camera(&mut self) -> Box<dyn Camera>;
+    fn pick_photo(&mut self);
 
     fn get_safe_area(&self) -> (f32, f32, f32, f32);
-    fn share_social(&self, data: String);
+    fn share_social(&mut self, data: String);
 
-    fn set_clipboard(&self, data: String);
+    fn set_clipboard(&mut self, data: String);
     fn get_clipboard(&self) -> Option<String>;
 
     fn trigger_haptic(&self);
 }
 
-pub struct Context(Box<dyn Handler>, pub Vec<Box<dyn Event>>);
+pub struct Context(&'static mut dyn Handler, &'static mut Vec<Box<dyn Event>>);
 impl Context {
-    pub fn new<H: Handler + 'static>(handler: H) -> Self {Context(Box::new(handler), Vec::new())}
+    fn new(handler: &mut dyn Handler, events: &mut Vec<Box<dyn Event>>) -> Self {
+        //This code is used so that during the event function triggered in the Instance I can pass around a &mut Context with out lifetime issues.
+        unsafe { Context(
+            std::mem::transmute::<&mut dyn Handler, &'static mut dyn Handler>(handler),
+            std::mem::transmute::<&mut Vec<Box<dyn Event>>, &'static mut Vec<Box<dyn Event>>>(events)
+        )}
+    }
 
     pub fn me(&self) -> Name {self.0.me()}
 
@@ -48,19 +69,19 @@ impl Context {
 
     pub fn list<C: Contract>(&self) -> Vec<Id> {self.0.list(C::id())}
 
-    pub fn create<C: Contract>(&self, contract: C) -> Result<Id, Error> {
+    pub fn create<C: Contract>(&mut self, contract: C) -> Result<Id, Error> {
         let (id, request) = self.0.builder().create(contract)?;
         self.0.request(request);
         Ok(id)
     }
 
-    pub fn share<C: Contract>(&self, iid: Id, name: Name) -> Result<(), Error> {
+    pub fn share<C: Contract>(&mut self, iid: Id, name: Name) -> Result<(), Error> {
         let request = self.0.builder().share::<C>(iid, name)?;
         self.0.request(request);
         Ok(())
     }
 
-    pub fn send<P: AsRef<Path>, R: Reactant + 'static>(&self, id: Id, path: P, reactant: R) -> Result<Result<(), R::Error>, Error> {
+    pub fn send<P: AsRef<Path>, R: Reactant + 'static>(&mut self, id: Id, path: P, reactant: R) -> Result<Result<(), R::Error>, Error> {
         let request = self.0.builder().send(id, path, reactant)?;
         self.0.request(request);
         Ok(Ok(()))
@@ -68,53 +89,66 @@ impl Context {
 
     pub fn emit<E: Event>(&mut self, event: E) {self.1.push(Box::new(event))}
 
-    pub fn start_camera(&self) {self.0.start_camera()}
-    pub fn stop_camera(&self) {self.0.stop_camera()}
-    pub fn pick_photo(&self) {self.0.pick_photo()}
-    pub fn get_safe_area(&self) -> (f32, f32, f32, f32) {self.0.get_safe_area()}
-    pub fn share_social(&self, data: String) {self.0.share_social(data)}
+    pub fn start_camera(&mut self) -> Box<dyn Camera> {self.0.start_camera()}
+    pub fn pick_photo(&mut self) {self.0.pick_photo()}
 
-    pub fn set_clipboard(&self, data: String) {self.0.set_clipboard(data);}
+    pub fn get_safe_area(&self) -> (f32, f32, f32, f32) {self.0.get_safe_area()}
+    pub fn share_social(&mut self, data: String) {self.0.share_social(data)}
+
+    pub fn set_clipboard(&mut self, data: String) {self.0.set_clipboard(data);}
     pub fn get_clipboard(&self) -> Option<String> {self.0.get_clipboard()}
 
     pub fn trigger_haptic(&self) {self.0.trigger_haptic()}
 }
 
+pub struct Instance {
+    app: Box<dyn Drawable>,
+    screen: (f32, f32),
+    request: RequestTree,
+    size: SizedTree,
+    events: Vec<Box<dyn Event>>
+}
 
-/// `true` if the target platform is iOS or Android, otherwise `false`.
-#[cfg(any(target_os = "ios", target_os = "android"))]
-pub const IS_MOBILE: bool = true;
-#[cfg(not(any(target_os = "ios", target_os = "android")))]
-pub const IS_MOBILE: bool = false;
+impl Instance {
+    pub fn new<D: Drawable>(builder: impl FnOnce(&mut Context) -> D, handler: &mut dyn Handler, screen: (f32, f32)) -> Self {
+        let mut events = Vec::new();
+        let mut context = Context::new(handler, &mut events);
+        let app = builder(&mut context);
+        let size_request = app.request_size();
+        let sized_app = app.build(screen, &size_request);
 
-/// `true` if the target architecture is WebAssembly (`wasm32`), otherwise `false`.
-#[cfg(target_arch = "wasm32")]
-pub const IS_WEB: bool = true;
-#[cfg(not(target_arch = "wasm32"))]
-pub const IS_WEB: bool = false;
-
-use image::RgbaImage;
-use include_dir::{DirEntry, Dir};
-
-pub struct Assets(pub Dir<'static>);
-impl Assets {
-    pub fn load_file(&self, file: &str) -> Option<Vec<u8>> {
-        self.0.entries().iter().find_map(|e| match e {
-            DirEntry::File(f) => (f.path().to_str().unwrap().to_lowercase() == file.to_lowercase()).then_some(f.contents().to_vec()),
-            _ => None,
-        })
+        Instance {
+            app: Box::new(app),
+            screen,
+            request: size_request,
+            size: sized_app,
+            events
+        }
     }
 
-    pub fn load_svg(svg: &[u8]) -> RgbaImage {
-        let svg = std::str::from_utf8(svg).unwrap();
-        let svg = nsvg::parse_str(svg, nsvg::Units::Pixel, 96.0).unwrap();
-        let rgba = svg.rasterize(8.0).unwrap();
-        let size = rgba.dimensions();
-        RgbaImage::from_raw(size.0, size.1, rgba.into_raw()).unwrap()
+    pub fn resize(&mut self, screen: (f32, f32)) {
+        self.screen = screen;
+        self.size = self.app.build(self.screen, &self.request);
     }
 
-    pub fn load_image(&self, file: &str) -> Option<RgbaImage> {
-        let bytes = Assets::load_file(self, file).expect("No file");
-        Some(image::load_from_memory(&bytes).expect("Unsupported or corrupt image").into_rgba8())
+    pub fn emit<E: Event>(&mut self, event: E) {self.events.push(Box::new(event));}
+
+    pub fn draw(&mut self, handler: &mut dyn Handler) -> Vec<(Area, Item)> {
+        let mut context = Context::new(handler, &mut self.events);
+        self.app.event(&mut context, &self.size, Box::new(TickEvent));
+        let events = self.events.drain(..).rev().collect::<Vec<_>>();
+        let mut context = Context::new(handler, &mut self.events);
+        for event in events {
+            if let Some(event) = event
+                .pass(&mut context, &[prism::layout::Area{offset: (0.0, 0.0), size: self.size.0}])
+                .remove(0)
+            {
+                self.app.event(&mut context, &self.size, event);
+            }
+        }
+
+        self.request = self.app.request_size();
+        self.size = self.app.build(self.screen, &self.request);
+        self.app.draw(&self.size, (0.0, 0.0), (0.0, 0.0, self.screen.0, self.screen.1))
     }
 }

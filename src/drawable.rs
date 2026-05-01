@@ -30,7 +30,7 @@ pub type Size = (f32, f32);
 pub trait Drawable: DynClone + Debug + Any + Downcast {
     fn request_size(&self) -> RequestTree;
 
-    fn build(&self, size: Size, request: RequestTree) -> SizedTree {
+    fn build(&self, size: Size, request: &RequestTree) -> SizedTree {
         SizedTree(request.0.get(size), vec![])
     }
 
@@ -46,7 +46,7 @@ impl_downcast!(Drawable);
 
 impl Drawable for Box<dyn Drawable> {
     fn request_size(&self) -> RequestTree {Drawable::request_size(&**self)}
-    fn build(&self, size: Size, request: RequestTree) -> SizedTree {
+    fn build(&self, size: Size, request: &RequestTree) -> SizedTree {
         Drawable::build(&**self, size, request)
     }
     fn draw(&self, sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<(CanvasArea, CanvasItem)> {
@@ -65,7 +65,7 @@ impl<D: Drawable + Debug + Any + Clone> Drawable for Option<D> {
         self.as_ref().map(|d| Drawable::request_size(d)).unwrap_or_default()
     }
 
-    fn build(&self, size: Size, request: RequestTree) -> SizedTree {
+    fn build(&self, size: Size, request: &RequestTree) -> SizedTree {
         self.as_ref().map(|d| Drawable::build(d, size, request)).unwrap_or_default()
     }
 
@@ -121,7 +121,6 @@ pub trait Component: Clone + Debug where Self: 'static {
     fn children(&self) -> Vec<&dyn Drawable>;
     fn layout(&self) -> &dyn Layout;
 }
-//TODO: could relpaces request_size and build with a layout getter and run Layout methods directly
 
 impl<C: Component + Clone + 'static + OnEvent> Drawable for C {
     fn request_size(&self) -> RequestTree {
@@ -131,13 +130,13 @@ impl<C: Component + Clone + 'static + OnEvent> Drawable for C {
         RequestTree(r, requests)
     }
 
-    fn build(&self, size: Size, request: RequestTree) -> SizedTree {
+    fn build(&self, size: Size, request: &RequestTree) -> SizedTree {
         let size = request.0.get(size);
         let children = request.1.iter().map(|b| b.0).collect::<Vec<_>>();
         SizedTree(
             size,
             self.layout().build(size, children).into_iter()
-            .zip(self.children()).zip(request.1)
+            .zip(self.children()).zip(request.1.iter())
             .map(|((Area{offset, size}, child), branch)| {
                 (offset, child.build(size, branch))
             }).collect()

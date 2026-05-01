@@ -14,7 +14,7 @@ uuid = { version = "1.16.0", features = ["v4", "js"] }
 #wgpu_canvas = {version="5.0.8", default-features = false}
 wgpu_canvas = {path="../wgpu_canvas", default-features = false}
 prism_proc = "0.1.1" 
-image = "0.25.9"
+image = "0.25.8"
 include_dir = "0.7.4"
 nsvg = "0.5.1"
 dyn-clone = "1.0.20"
