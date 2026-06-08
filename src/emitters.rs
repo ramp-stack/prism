@@ -6,16 +6,6 @@ use std::time::Duration;
 
 const TEXT_INPUT_UUID: uuid::Uuid = uuid::uuid!("123e4567-e89b-12d3-a456-426614174000");
 
-/// The [`Button`] emitter wraps a drawable component
-/// and converts mouse input into a small set of semantic button states:
-///
-/// - [`Button::Pressed(true)`](crate::event::Button::Pressed) — when the mouse is pressed within the button’s bounds.
-/// - [`Button::Pressed(false)`](crate::event::Button::Pressed) — when the mouse is pressed outside the button’s bounds.
-/// - [`Button::Hover(true)`](crate::event::Button::Hover) — when the mouse moves over the button.
-/// - [`Button::Hover(false)`](crate::event::Button::Hover) — when the mouse leaves the button.
-///
-/// This allows components to react to common button states without manually handling raw input.
-///
 #[derive(Debug, Component, Clone)]
 pub struct Button<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] bool);
 impl<D: Drawable + Clone + 'static> Button<D> {
@@ -85,13 +75,6 @@ impl<D: Drawable + Clone + 'static> OnEvent for NumericalInput<D> {
     }
 }
 
-/// The [`Selectable`] emitter allows one item in a group to be active at a time. 
-/// When pressed, it emits an event with its unique ID and group ID, 
-/// allowing other components in the same group to update their state accordingly.
-///
-/// - [`Selectable::Pressed(id, group_id)`](crate::event::Selectable::Pressed) - when this element was pressed,
-/// - [`Selectable::Selected(true)`](crate::event::Selectable::Selected) - when this element was selected,
-/// - [`Selectable::Selected(false)`](crate::event::Selectable::Selected) - when another item in the same group was selected.
 #[derive(Debug, Component, Clone)]
 pub struct Selectable<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] uuid::Uuid, #[skip] uuid::Uuid);
 impl<D: Drawable + Clone + 'static> Selectable<D> {
@@ -101,7 +84,7 @@ impl<D: Drawable + Clone + 'static> Selectable<D> {
 }
 impl<D: Drawable + Clone + 'static> OnEvent for Selectable<D> {
     fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
-        if let Some(MouseEvent { state: MouseState::Pressed, position: Some(_) }) = event.downcast_ref::<MouseEvent>() {
+        if let Some(MouseEvent { state: MouseState::Pressed, position: Some(_), .. }) = event.downcast_ref::<MouseEvent>() {
             ctx.emit(event::Selectable::Pressed(self.2.to_string(), self.3.to_string()));
         } else if let Some(event::Selectable::Pressed(id, group_id)) = event.downcast_ref::<event::Selectable>()
         && *group_id == self.3.to_string() {
@@ -112,12 +95,6 @@ impl<D: Drawable + Clone + 'static> OnEvent for Selectable<D> {
     }
 }
 
-/// The [`Slider`] emitter wraps a drawable component
-/// and converts mouse input into a small set of semantic slider states:
-///
-/// - [`Slider::Start(x)`](crate::event::Slider::Start) — when the user clicks or begins dragging.
-/// - [`Slider::Moved(x)`](crate::event::Slider::Moved) — while dragging with the mouse pressed.
-/// - Automatically stops tracking when released.
 #[derive(Debug, Component, Clone)]
 pub struct Slider<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] bool);
 impl<D: Drawable + Clone + 'static> Slider<D> {
@@ -126,7 +103,7 @@ impl<D: Drawable + Clone + 'static> Slider<D> {
 
 impl<D: Drawable + Clone + 'static> OnEvent for Slider<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
-        if let Some(MouseEvent { state, position, }) = event.downcast_ref::<MouseEvent>() {
+        if let Some(MouseEvent { state, position, .. }) = event.downcast_ref::<MouseEvent>() {
             return match (state, position) {
                 (MouseState::Pressed, Some((x, _))) => {
                     self.2 = true;
@@ -147,14 +124,6 @@ impl<D: Drawable + Clone + 'static> OnEvent for Slider<D> {
     }
 }
 
-/// The [`TextInput`] emitter wraps a drawable component
-/// and converts raw input into a small set of semantic text input states:
-///
-/// - [`TextInput::Focused(true)`](crate::event::TextInput::Focused) — when focused (clicked inside bounds).
-/// - [`TextInput::Focused(false)`](crate::event::TextInput::Focused) — when unfocused (clicked outside bounds).
-/// - [`TextInput::Hover(true)`](crate::event::TextInput::Hover) — when the mouse hovers over the input.
-/// - [`TextInput::Hover(false)`](crate::event::TextInput::Hover) — when the mouse leaves the input.
-/// - Passes keyboard events through only when focused.
 #[derive(Debug, Component, Clone)]
 pub struct TextInput<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] Option<bool>);
 impl<D: Drawable + Clone + 'static> TextInput<D> {
@@ -181,11 +150,6 @@ impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
                 MouseState::Moved | MouseState::Scroll(..) if !crate::IS_MOBILE && !self.2.unwrap_or_default() => {
                     events.push(Box::new(event::TextInput::Hover(e.position.is_some())));
                 }
-                //     if !crate::IS_MOBILE && e.position.is_none() {
-                //         // true => events.push(Box::new(event::TextInput::Hover(true))),
-                //         events.push(Box::new(event::TextInput::Focused(false)));
-                //     }
-                // }
                 _ => {}
             }
 
@@ -223,7 +187,7 @@ impl<D: Drawable + Clone + PartialEq + 'static> std::ops::DerefMut for Scrollabl
 
 impl<D: Drawable + Clone + PartialEq + 'static> OnEvent for Scrollable<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
-        if let Some(MouseEvent{position: Some(position), state}) = event.downcast_ref::<event::MouseEvent>() {
+        if let Some(MouseEvent { position: Some(position), state, .. }) = event.downcast_ref::<event::MouseEvent>() {
             match state {
                 MouseState::Pressed => {
                     self.2 = *position;
@@ -231,9 +195,11 @@ impl<D: Drawable + Clone + PartialEq + 'static> OnEvent for Scrollable<D> {
                 },
                 MouseState::Released => {
                     if (position.1 - self.2.1).abs() < 5.0 {
-                        return vec![Box::new(MouseEvent{position: Some(*position), state: MouseState::Pressed}), Box::new(MouseEvent{position: Some(*position), state: MouseState::Released})];
+                        return vec![
+                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Pressed,  button: None }),
+                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Released, button: None }),
+                        ];
                     }
-
                     return Vec::new();
                 }
                 _ => {}
@@ -274,10 +240,9 @@ impl<D: Drawable + Clone + 'static> Momentum<D> {
 impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
     fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if crate::IS_MOBILE {
-            if let Some(MouseEvent{position: Some(position), state}) = event.downcast_ref::<MouseEvent>() {
+            if let Some(MouseEvent { position: Some(position), state, .. }) = event.downcast_ref::<MouseEvent>() {
                 match state {
                     MouseState::Pressed => {
-                        self.scroll = Some(*position);
                         self.scroll = Some(*position);
                         self.touching = true;
                     }, 
@@ -313,12 +278,9 @@ impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
                 }
 
                 if let Some(speed) = self.speed {
-                    let state = (speed.abs() > 0.01).then_some(
-                        MouseState::Scroll(0.0, speed)
-                    );
-
+                    let state = (speed.abs() > 0.01).then_some(MouseState::Scroll(0.0, speed));
                     if let Some(s) = state {
-                        ctx.emit(MouseEvent { position: Some(self.mouse), state: s });
+                        ctx.emit(MouseEvent { position: Some(self.mouse), state: s, button: None });
                     }
                 }
             }
@@ -326,5 +288,3 @@ impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
         vec![event]
     }
 }
-
-
