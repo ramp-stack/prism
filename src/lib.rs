@@ -2,8 +2,9 @@ use std::path::{PathBuf, Path};
 use std::fmt::Debug;
 use std::any::Any;
 
-pub use air::names::{Name, Id};
-pub use air::contract::{Contract, Reactant, Substance, RequestBuilder, Error, Request};
+use air::Air;
+pub use air::{Name, Id};
+pub use air::{Contract, Reactant};
 
 use event::{Event, TickEvent};
 use drawable::{Drawable, RequestTree, SizedTree};
@@ -31,14 +32,7 @@ impl<C: Any + Debug + Clone> Camera for C {
 impl Clone for Box<dyn Camera> {fn clone(&self) -> Self {(**self).clone_camera()}}
 
 pub trait Handler {
-    fn me(&self) -> Name;
-
-    ///TODO: remove
-    fn builder(&self) -> &RequestBuilder;
-    fn request(&mut self, request: Request);
-    fn list(&self, c_id: Id) -> Vec<Id>;
-    fn get(&self, c_id: Id, id: Id, path: PathBuf) -> Option<Substance>;
-
+    fn air(&mut self) -> &mut air::Context;
     fn start_camera(&mut self) -> Box<dyn Camera>;
     fn pick_photo(&mut self);
 
@@ -49,6 +43,7 @@ pub trait Handler {
     fn get_clipboard(&self) -> Option<String>;
 
     fn trigger_haptic(&self);
+    fn push_notification(&self, header: &str, body: &str);
 }
 
 pub struct Context(&'static mut dyn Handler, &'static mut Vec<Box<dyn Event>>);
@@ -61,31 +56,9 @@ impl Context {
         )}
     }
 
-    pub fn me(&self) -> Name {self.0.me()}
-
-    pub fn get<C: Contract, P: AsRef<Path>>(&self, iid: &Id, path: P) -> Option<Substance> {
-        self.0.get(C::id(), *iid, path.as_ref().to_path_buf())
-    }
-
-    pub fn list<C: Contract>(&self) -> Vec<Id> {self.0.list(C::id())}
-
-    pub fn create<C: Contract>(&mut self, contract: C) -> Result<Id, Error> {
-        let (id, request) = self.0.builder().create(contract)?;
-        self.0.request(request);
-        Ok(id)
-    }
-
-    pub fn share<C: Contract>(&mut self, iid: Id, name: Name) -> Result<(), Error> {
-        let request = self.0.builder().share::<C>(iid, name)?;
-        self.0.request(request);
-        Ok(())
-    }
-
-    pub fn send<P: AsRef<Path>, R: Reactant + 'static>(&mut self, id: Id, path: P, reactant: R) -> Result<Result<(), R::Error>, Error> {
-        let request = self.0.builder().send(id, path, reactant)?;
-        self.0.request(request);
-        Ok(Ok(()))
-    }
+    pub fn me(&mut self) -> Name {self.0.air().me()}
+    pub fn create<C: Contract>(&mut self, init: C::Init) -> air::Instance<C> {self.0.air().create::<C>(init)}
+    pub fn list<C: Contract>(&mut self) -> Vec<air::Instance<C>> {self.0.air().list::<C>()}
 
     pub fn emit<E: Event>(&mut self, event: E) {self.1.push(Box::new(event))}
 
@@ -99,6 +72,8 @@ impl Context {
     pub fn get_clipboard(&self) -> Option<String> {self.0.get_clipboard()}
 
     pub fn trigger_haptic(&self) {self.0.trigger_haptic()}
+
+    pub fn push_notification(&self, header: &str, message: &str) {self.0.push_notification(header, message);}
 }
 
 pub struct Instance {
