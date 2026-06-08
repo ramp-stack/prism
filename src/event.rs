@@ -19,10 +19,11 @@ pub trait Event: Debug + Downcast {
 }
 impl_downcast!(Event);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum MouseState {
     Pressed,
     Moved,
+    #[default]
     Released,
     Scroll(f32, f32),
 }
@@ -49,7 +50,7 @@ pub struct Modifiers {
     pub meta:    bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct MouseEvent {
     pub position: Option<(f32, f32)>,
     pub state:    MouseState,
