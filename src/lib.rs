@@ -1,8 +1,6 @@
-use std::path::{PathBuf, Path};
 use std::fmt::Debug;
 use std::any::Any;
 
-use air::Air;
 pub use air::{Name, Id};
 pub use air::{Contract, Reactant};
 
@@ -59,6 +57,7 @@ impl Context {
     pub fn me(&mut self) -> Name {self.0.air().me()}
     pub fn create<C: Contract>(&mut self, init: C::Init) -> air::Instance<C> {self.0.air().create::<C>(init)}
     pub fn list<C: Contract>(&mut self) -> Vec<air::Instance<C>> {self.0.air().list::<C>()}
+    pub fn register<C: Contract>(&mut self) {self.0.air().register::<C>()}
 
     pub fn emit<E: Event>(&mut self, event: E) {self.1.push(Box::new(event))}
 
@@ -125,5 +124,26 @@ impl Instance {
         self.request = self.app.request_size();
         self.size = self.app.build(self.screen, &self.request);
         self.app.draw(&self.size, (0.0, 0.0), (0.0, 0.0, self.screen.0, self.screen.1))
+    }
+}
+
+
+pub struct ContractListener<C: Contract> {
+    contract: C,
+    on_tick: Box<dyn FnMut(&mut Context, &C)>,
+    update: Box<dyn FnMut() -> C>,
+}
+
+impl<C: Contract> ContractListener<C> {
+    pub fn new(contract: C, on_tick: impl FnMut(&mut Context, &C) + 'static, update: impl FnMut() -> C + 'static) -> Self {
+        ContractListener {contract, on_tick: Box::new(on_tick), update: Box::new(update)}
+    }
+
+    pub fn update(&mut self) {
+        self.contract = (self.update)();
+    }
+
+    pub fn tick(&mut self, ctx: &mut Context) {
+        (self.on_tick)(ctx, &self.contract)
     }
 }
