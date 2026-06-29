@@ -1,4 +1,4 @@
-use crate::event::{self, OnEvent, Key, NamedKey, Event, TickEvent, MouseEvent, MouseState, KeyboardEvent, KeyboardState};
+use crate::event::{self, OnEvent, Key, Event, TickEvent, MouseEvent, MouseState, KeyboardEvent, KeyboardState, MouseButton};
 use crate::{events, Context};
 use crate::drawable::{Drawable, Component, SizedTree};
 use crate::layout::Stack;
@@ -16,14 +16,14 @@ impl<D: Drawable + Clone + 'static> OnEvent for Button<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if let Some(event) = event.downcast_ref::<MouseEvent>() {
             match event.state {
-                MouseState::Pressed if event.position.is_some() => {
+                MouseState::Pressed(MouseButton::Left) if event.position.is_some() => {
                     self.2 = true;
                     return events![event::Button::Pressed(true)];
                 },
                 MouseState::Moved | MouseState::Scroll(..) if !crate::IS_MOBILE => {
                     return events![event::Button::Hover(event.position.is_some())];
                 },
-                MouseState::Released => {
+                MouseState::Released(MouseButton::Left) => {
                     let result = match !crate::IS_MOBILE && event.position.is_some() {
                         true if self.2 => events![event::Button::Pressed(false), event::Button::Hover(true)],
                         true => events![event::Button::Hover(true)],
@@ -54,7 +54,7 @@ impl<D: Drawable + Clone + 'static> OnEvent for NumericalInput<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(KeyboardEvent { state: KeyboardState::Pressed, key, .. }) = event.downcast_ref::<KeyboardEvent>() {
             match key {
-                Key::Named(NamedKey::Delete | NamedKey::Backspace) => {
+                Key::Delete | Key::Backspace => {
                     return events![event::NumericalInput::Delete];
                 }
                 Key::Character(c) => {
@@ -84,7 +84,7 @@ impl<D: Drawable + Clone + 'static> Selectable<D> {
 }
 impl<D: Drawable + Clone + 'static> OnEvent for Selectable<D> {
     fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
-        if let Some(MouseEvent { state: MouseState::Pressed, position: Some(_), .. }) = event.downcast_ref::<MouseEvent>() {
+        if let Some(MouseEvent {position: Some(_), state: MouseState::Pressed(MouseButton::Left)}) = event.downcast_ref::<MouseEvent>() {
             ctx.emit(event::Selectable::Pressed(self.2.to_string(), self.3.to_string()));
         } else if let Some(event::Selectable::Pressed(id, group_id)) = event.downcast_ref::<event::Selectable>()
         && *group_id == self.3.to_string() {
@@ -105,11 +105,11 @@ impl<D: Drawable + Clone + 'static> OnEvent for Slider<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
         if let Some(MouseEvent { state, position, .. }) = event.downcast_ref::<MouseEvent>() {
             return match (state, position) {
-                (MouseState::Pressed, Some((x, _))) => {
+                (MouseState::Pressed(MouseButton::Left), Some((x, _))) => {
                     self.2 = true;
                     events![event::Slider::Start(*x)]
                 },
-                (MouseState::Released, _) => {
+                (MouseState::Released(MouseButton::Left), _) => {
                     self.2 = false;
                     Vec::new()
                 },
@@ -139,11 +139,11 @@ impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
             let mut events: Vec<Box<dyn Event>> = Vec::new();
 
             match e.state {
-                MouseState::Pressed if e.position.is_some() => {
+                MouseState::Pressed(MouseButton::Left) if e.position.is_some() => {
                     if let Some(focus) = &mut self.2 {*focus = true;}
                     events.push(Box::new(event::TextInput::Focused(true)));
                 }
-                MouseState::Pressed if e.position.is_none() && !crate::IS_MOBILE => { 
+                MouseState::Pressed(MouseButton::Left) if e.position.is_none() && !crate::IS_MOBILE => { 
                     if let Some(focus) = &mut self.2 {*focus = false;}
                     events.push(Box::new(event::TextInput::Focused(false)));
                 },
@@ -156,11 +156,11 @@ impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
             events.push(event);
             return events;
         } else if let Some(KeyboardEvent { state: KeyboardState::Pressed, key, .. }) = event.downcast_ref() {
-            let key = key.clone();
+            let key = *key;
             if let Some(focus) = self.2 {
-                return if focus { vec![event, Box::new(event::TextInput::Edited(key.clone()))] } else { Vec::new() };
+                return if focus { vec![event, Box::new(event::TextInput::Edited(key))] } else { Vec::new() };
             }
-            return vec![event, Box::new(event::TextInput::Edited(key.clone()))];
+            return vec![event, Box::new(event::TextInput::Edited(key))];
         }
 
         vec![event]
@@ -189,15 +189,15 @@ impl<D: Drawable + Clone + PartialEq + 'static> OnEvent for Scrollable<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(MouseEvent { position: Some(position), state, .. }) = event.downcast_ref::<event::MouseEvent>() {
             match state {
-                MouseState::Pressed => {
+                MouseState::Pressed(MouseButton::Left) => {
                     self.2 = *position;
                     return Vec::new();
                 },
-                MouseState::Released => {
+                MouseState::Released(MouseButton::Left) => {
                     if (position.1 - self.2.1).abs() < 5.0 {
                         return vec![
-                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Pressed,  button: None }),
-                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Released, button: None }),
+                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Pressed(MouseButton::Left)}),
+                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Released(MouseButton::Left)}),
                         ];
                     }
                     return Vec::new();
@@ -242,19 +242,20 @@ impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
         if crate::IS_MOBILE {
             if let Some(MouseEvent { position: Some(position), state, .. }) = event.downcast_ref::<MouseEvent>() {
                 match state {
-                    MouseState::Pressed => {
+                    MouseState::Pressed(MouseButton::Left) => {
                         self.scroll = Some(*position);
                         self.touching = true;
                     }, 
                     MouseState::Moved => {
                         self.mouse = *position;
                     }, 
-                    MouseState::Released => {
+                    MouseState::Released(MouseButton::Left) => {
                         self.touching = false;
                     },
                     MouseState::Scroll(..) => {
                         self.scroll = Some(*position);
                     }, 
+                    _ => {}
                 }
                 self.mouse = *position;
             } else if event.downcast_ref::<TickEvent>().is_some() && !self.touching && let Some(time) = self.time {
@@ -280,7 +281,7 @@ impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
                 if let Some(speed) = self.speed {
                     let state = (speed.abs() > 0.01).then_some(MouseState::Scroll(0.0, speed));
                     if let Some(s) = state {
-                        ctx.emit(MouseEvent { position: Some(self.mouse), state: s, button: None });
+                        ctx.emit(MouseEvent { position: Some(self.mouse), state: s});
                     }
                 }
             }
