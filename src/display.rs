@@ -86,14 +86,15 @@ impl<D: Drawable + Clone + 'static> Enum<D> {
 
     /// Displays only the item matching the given name and hides all others. 
     /// If the key doesn't exist, defaults to the first item.
-    pub fn display(&mut self, name: &str) {
+    pub fn display(&mut self, name: &str) -> bool {
         if self.1.contains_key(name) {  
             self.2 = name.to_string();
 
             for (k, v) in self.1.iter_mut() {
                 v.display(*k == name);
             }
-        };
+            true
+        } else {false}
     }
 
     pub fn current(&self) -> String { self.2.to_string() }
