@@ -410,6 +410,7 @@ impl Column {
 
     pub fn adjust_scroll(&mut self, delta: f32) { 
         if let Some(s) = &mut self.4 { 
+            println!("Adjusting scroll");
             match self.5 {
                 ScrollAnchor::Start => **s.lock().as_mut().unwrap() += delta,
                 ScrollAnchor::End => **s.lock().as_mut().unwrap() -= delta,

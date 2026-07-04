@@ -1,7 +1,7 @@
 use crate::event::{self, OnEvent, Key, Event, TickEvent, MouseEvent, MouseState, KeyboardEvent, KeyboardState, MouseButton};
 use crate::{events, Context};
 use crate::drawable::{Drawable, Component, SizedTree};
-use crate::layout::Stack;
+use crate::layout::{Stack, Column, Offset, Size, Padding, ScrollAnchor};
 use std::time::Duration;
 
 const TEXT_INPUT_UUID: uuid::Uuid = uuid::uuid!("123e4567-e89b-12d3-a456-426614174000");
@@ -166,125 +166,148 @@ impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
     }
 }
 
-#[derive(Debug, Component, Clone)]
-pub struct Scrollable<D: Drawable + Clone + PartialEq + 'static>(Stack, pub Momentum<D>, #[skip] (f32, f32));
+#[derive(Debug, Clone, Component)]
+pub struct Scrollable<D: Drawable + Clone>(Column, pub D);
+impl<D: Drawable + Clone> Scrollable<D> {
+    pub fn new(drawable: D) -> Self {
+        let layout = Column::new(0.0, Offset::Start, Size::Fit, Padding::default(), Some(ScrollAnchor::Start));
+        Scrollable(layout, drawable)
+    }
 
-impl<D: Drawable + Clone + PartialEq + 'static> Scrollable<D> {
-    pub fn new(child: D) -> Self {
-        Scrollable(Stack::default(), Momentum::new(child), (0.0, 0.0))
+    pub fn end(drawable: D) -> Self {
+        let layout = Column::new(0.0, Offset::Start, Size::Fit, Padding::default(), Some(ScrollAnchor::End));
+        Scrollable(layout, drawable)
     }
 }
-
-impl<D: Drawable + Clone + PartialEq + 'static> std::ops::Deref for Scrollable<D> {
-    type Target = Momentum<D>;
-    fn deref(&self) -> &Self::Target {&self.1}
-}
-
-impl<D: Drawable + Clone + PartialEq + 'static> std::ops::DerefMut for Scrollable<D> {
-    fn deref_mut(&mut self) -> &mut Self::Target {&mut self.1}
-}
-
-impl<D: Drawable + Clone + PartialEq + 'static> OnEvent for Scrollable<D> {
-    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
-        if let Some(MouseEvent { position: Some(position), state, .. }) = event.downcast_ref::<event::MouseEvent>() {
-            match state {
-                MouseState::Pressed(MouseButton::Left) => {
-                    self.2 = *position;
-                    return Vec::new();
-                },
-                MouseState::Released(MouseButton::Left) => {
-                    if (position.1 - self.2.1).abs() < 5.0 {
-                        return vec![
-                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Pressed(MouseButton::Left)}),
-                            Box::new(MouseEvent { position: Some(*position), state: MouseState::Released(MouseButton::Left)}),
-                        ];
-                    }
-                    return Vec::new();
-                }
-                _ => {}
-            }
-        } 
-
-        vec![event]
-    }
-}
-
-#[derive(Debug, Component, Clone)]
-pub struct Momentum<D: Drawable + Clone + 'static> {
-    layout: Stack,
-    pub inner: D,
-    #[skip] touching: bool,
-    #[skip] start_touch: Option<(f32, f32)>,
-    #[skip] mouse: (f32, f32),
-    #[skip] scroll: Option<(f32, f32)>,
-    #[skip] time: Option<Duration>,
-    #[skip] speed: Option<f32>,
-}
-
-impl<D: Drawable + Clone + 'static> Momentum<D> {
-    pub fn new(child: D) -> Self { 
-        Momentum {
-            layout: Stack::default(),
-            inner: child,
-            touching: false,
-            start_touch: None,
-            mouse: (0.0, 0.0),
-            scroll: None,
-            time: None,
-            speed: None,
-        }
-    }
-}
-
-impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
-    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
-        if crate::IS_MOBILE {
-            if let Some(MouseEvent { position: Some(position), state, .. }) = event.downcast_ref::<MouseEvent>() {
-                match state {
-                    MouseState::Pressed(MouseButton::Left) => {
-                        self.scroll = Some(*position);
-                        self.touching = true;
-                    }, 
-                    MouseState::Moved => {
-                        self.mouse = *position;
-                    }, 
-                    MouseState::Released(MouseButton::Left) => {
-                        self.touching = false;
-                    },
-                    MouseState::Scroll(..) => {
-                        self.scroll = Some(*position);
-                    }, 
-                    _ => {}
-                }
-                self.mouse = *position;
-            } else if event.downcast_ref::<TickEvent>().is_some() && !self.touching && let Some(time) = self.time {
-                match &mut self.speed {
-                    Some(speed) => {
-                        *speed *= 0.92;
-                        if speed.abs() < 0.1 {
-                            self.time = None;
-                            self.speed = None;
-                            self.start_touch = None;
-                            return vec![event];
-                        }
-                    }
-                    None => {
-                        let start_y = self.start_touch.unwrap_or((0.0, 0.0)).1;
-                        let end_y = self.scroll.unwrap_or((0.0, 0.0)).1;
-                        let y_traveled = end_y - start_y;
-                        let time_secs = time.as_secs_f32();
-                        self.speed = Some(-((y_traveled / time_secs) * 0.05));
-                    }
-                }
-
-                if let Some(speed) = self.speed {
-                    let state = (speed.abs() > 0.01).then_some(MouseState::Scroll(0.0, speed));
-                    if let Some(s) = state {
-                        ctx.emit(MouseEvent { position: Some(self.mouse), state: s});
-                    }
-                }
-            }
+impl<D: Drawable + Clone> OnEvent for Scrollable<D> {
+    fn on_event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+        if let Some(MouseEvent { state: MouseState::Scroll(_, y), position: Some(_) }) = event.downcast_ref::<MouseEvent>() {
+            self.0.adjust_scroll(*y);
         }
         vec![event]
     }
 }
+
+
+// #[derive(Debug, Component, Clone)]
+// pub struct Scrollable<D: Drawable + Clone + PartialEq + 'static>(Stack, pub Momentum<D>, #[skip] (f32, f32));
+
+// impl<D: Drawable + Clone + PartialEq + 'static> Scrollable<D> {
+//     pub fn new(child: D) -> Self {
+//         Scrollable(Stack::default(), Momentum::new(child), (0.0, 0.0))
+//     }
+// }
+
+// impl<D: Drawable + Clone + PartialEq + 'static> std::ops::Deref for Scrollable<D> {
+//     type Target = Momentum<D>;
+//     fn deref(&self) -> &Self::Target {&self.1}
+// }
+
+// impl<D: Drawable + Clone + PartialEq + 'static> std::ops::DerefMut for Scrollable<D> {
+//     fn deref_mut(&mut self) -> &mut Self::Target {&mut self.1}
+// }
+
+// impl<D: Drawable + Clone + PartialEq + 'static> OnEvent for Scrollable<D> {
+//     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+//         if let Some(MouseEvent { position: Some(position), state, .. }) = event.downcast_ref::<event::MouseEvent>() {
+//             match state {
+//                 MouseState::Pressed(MouseButton::Left) => {
+//                     self.2 = *position;
+//                     return Vec::new();
+//                 },
+//                 MouseState::Released(MouseButton::Left) => {
+//                     if (position.1 - self.2.1).abs() < 5.0 {
+//                         return vec![
+//                             Box::new(MouseEvent { position: Some(*position), state: MouseState::Pressed(MouseButton::Left)}),
+//                             Box::new(MouseEvent { position: Some(*position), state: MouseState::Released(MouseButton::Left)}),
+//                         ];
+//                     }
+//                     return Vec::new();
+//                 }
+//                 _ => {}
+//             }
+//         } 
+
+//         vec![event]
+//     }
+// }
+
+// #[derive(Debug, Component, Clone)]
+// pub struct Momentum<D: Drawable + Clone + 'static> {
+//     layout: Stack,
+//     pub inner: D,
+//     #[skip] touching: bool,
+//     #[skip] start_touch: Option<(f32, f32)>,
+//     #[skip] mouse: (f32, f32),
+//     #[skip] scroll: Option<(f32, f32)>,
+//     #[skip] time: Option<Duration>,
+//     #[skip] speed: Option<f32>,
+// }
+
+// impl<D: Drawable + Clone + 'static> Momentum<D> {
+//     pub fn new(child: D) -> Self { 
+//         Momentum {
+//             layout: Stack::default(),
+//             inner: child,
+//             touching: false,
+//             start_touch: None,
+//             mouse: (0.0, 0.0),
+//             scroll: None,
+//             time: None,
+//             speed: None,
+//         }
+//     }
+// }
+
+// impl<D: Drawable + Clone + 'static> OnEvent for Momentum<D> {
+//     fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
+//         if crate::IS_MOBILE {
+//             if let Some(MouseEvent { position: Some(position), state, .. }) = event.downcast_ref::<MouseEvent>() {
+//                 match state {
+//                     MouseState::Pressed(MouseButton::Left) => {
+//                         self.scroll = Some(*position);
+//                         self.touching = true;
+//                     }, 
+//                     MouseState::Moved => {
+//                         self.mouse = *position;
+//                     }, 
+//                     MouseState::Released(MouseButton::Left) => {
+//                         self.touching = false;
+//                     },
+//                     MouseState::Scroll(..) => {
+//                         self.scroll = Some(*position);
+//                     }, 
+//                     _ => {}
+//                 }
+//                 self.mouse = *position;
+//             } else if event.downcast_ref::<TickEvent>().is_some() && !self.touching && let Some(time) = self.time {
+//                 match &mut self.speed {
+//                     Some(speed) => {
+//                         *speed *= 0.92;
+//                         if speed.abs() < 0.1 {
+//                             self.time = None;
+//                             self.speed = None;
+//                             self.start_touch = None;
+//                             return vec![event];
+//                         }
+//                     }
+//                     None => {
+//                         let start_y = self.start_touch.unwrap_or((0.0, 0.0)).1;
+//                         let end_y = self.scroll.unwrap_or((0.0, 0.0)).1;
+//                         let y_traveled = end_y - start_y;
+//                         let time_secs = time.as_secs_f32();
+//                         self.speed = Some(-((y_traveled / time_secs) * 0.05));
+//                     }
+//                 }
+
+//                 if let Some(speed) = self.speed {
+//                     let state = (speed.abs() > 0.01).then_some(MouseState::Scroll(0.0, speed));
+//                     if let Some(s) = state {
+//                         ctx.emit(MouseEvent { position: Some(self.mouse), state: s});
+//                     }
+//                 }
+//             }
+//         }
+//         vec![event]
+//     }
+// }
