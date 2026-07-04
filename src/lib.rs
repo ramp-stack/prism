@@ -53,9 +53,7 @@ impl Context {
     }
 
     pub fn me(&self) -> Name {self.0.air().me()}
-    pub fn create<C: Contract>(&self, init: C::Init) -> air::Instance<C> {self.0.air().create::<C>(init)}
-    pub fn list<C: Contract>(&self) -> Vec<air::Instance<C>> {self.0.air().list::<C>()}
-    pub fn register<C: Contract>(&self) {self.0.air().register::<C>()}
+    pub fn instances<C: Contract>(&self) -> air::Instances<C> {self.0.air().instances::<C>()}
 
     pub fn emit<E: Event>(&mut self, event: E) {self.1.push(Box::new(event))}
 
