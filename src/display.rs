@@ -3,6 +3,7 @@ use crate::event::{OnEvent};
 use crate::layout::{Layout, Stack};
 use std::collections::HashMap;
 use std::clone::Clone;
+use std::ops::{Deref, DerefMut};
 
 /// A container pairing a layout with a drawable element.
 #[derive(Debug, Component, Clone)]
@@ -16,6 +17,20 @@ impl<L: Layout + Clone + 'static, D: Drawable + Clone + 'static> Bin<L, D> {
     }
     pub fn get_layout(&mut self) -> &mut L {
         &mut self.0
+    }
+}
+
+impl<L: Layout + Clone + 'static, D: Drawable + Clone + 'static> Deref for Bin<L, D> {
+    type Target = D;
+
+    fn deref(&self) -> &Self::Target {
+        &self.1
+    }
+}
+
+impl<L: Layout + Clone + 'static, D: Drawable + Clone + 'static> DerefMut for Bin<L, D> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.1
     }
 }
 

@@ -24,15 +24,25 @@ impl<D: Drawable + Clone + 'static> OnEvent for Button<D> {
                     return events![event::Button::Hover(event.position.is_some())];
                 },
                 MouseState::Released(MouseButton::Left) => {
-                    let result = match event.position.is_some() {
-                        true if !crate::IS_MOBILE => events![event::Button::Pressed(false), event::Button::Hover(true)],
-                        false if self.2 => events![event::Button::Pressed(false)],
-                        _ => vec![]
-                    };
+                    if self.2 {
+                        self.2 = false;
 
-                    self.2 = false;
-                    return result;
-                },
+                        if event.position.is_some() {
+                            // Released inside the button.
+                            if crate::IS_MOBILE {
+                                return events![event::Button::Pressed(false)];
+                            } else {
+                                return events![
+                                    event::Button::Pressed(false),
+                                    event::Button::Hover(true),
+                                ];
+                            }
+                        } else {
+                            // Released outside the button.
+                            return events![event::Button::Pressed(false)];
+                        }
+                    }
+                }
                 _ => {}
             }
         }
