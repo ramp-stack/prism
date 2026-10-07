@@ -27,14 +27,14 @@ pub struct Modifiers {
 }
 
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Key {
     Escape, Enter, Tab, Space,
     Up, Down, Left, Right,
     Delete, Backspace, Home, End,
     Shift, Control, Alt, SuperMeta,
     CapsLock, NumLock, ScrollLock,
-    Character(char)
+    Character(String)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

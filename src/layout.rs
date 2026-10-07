@@ -7,7 +7,7 @@ pub struct Area {
 }
 
 /// Trait for layouts that determine the offset and allotted sizes of its children
-pub trait Layout: std::fmt::Debug {
+pub trait Layout: std::fmt::Debug + DynClone {
 
     /// Given a list of children size requests calculate the size request for the total layout
     fn request_size(&self, children: Vec<SizeRequest>) -> SizeRequest;
@@ -16,6 +16,19 @@ pub trait Layout: std::fmt::Debug {
     /// calculate the actual offsets and allotted sizes for its children
     fn build(&self, size: (f32, f32), children: Vec<SizeRequest>) -> Vec<Area>;
 }
+
+impl Layout for Box<dyn Layout> {
+    fn request_size(&self, children: Vec<SizeRequest>) -> SizeRequest {
+        (**self).request_size(children)
+    }
+
+    fn build(&self, size: (f32, f32), children: Vec<SizeRequest>) -> Vec<Area> {
+        (**self).build(size, children)
+    }
+}
+
+use dyn_clone::DynClone;
+dyn_clone::clone_trait_object!(Layout);
 
 /// Structure used to designate space to a component or drawable.
 ///

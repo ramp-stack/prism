@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 use std::any::Any;
 
-pub use air::{Name, Id};
-pub use air::{Contract, Reactant};
+pub use maverick_os::air::{self, Name, Id};
+pub use maverick_os::air::Contract;
 
 use event::{Event, TickEvent};
 use drawable::{Drawable, RequestTree, SizedTree};
@@ -30,7 +30,7 @@ impl<C: Any + Debug + Clone> Camera for C {
 impl Clone for Box<dyn Camera> {fn clone(&self) -> Self {(**self).clone_camera()}}
 
 pub trait Handler {
-    fn air(&self) -> &air::Context;
+    fn air(&self) -> &maverick_os::air::Context;
     fn start_camera(&self) -> Box<dyn Camera>;
     fn pick_photo(&self);
 
@@ -55,7 +55,7 @@ impl Context {
     pub fn me(&self) -> Name {self.0.air().me()}
     pub fn list<C: Contract>(&self) -> std::collections::HashMap<Id, air::Instance<C>> {self.0.air().list::<C>()}
     pub fn create<C: Contract>(&self, init: C::Init) -> air::Instance<C> {self.0.air().create::<C>(init)}
-    pub fn instances<C: Contract>(&self) -> air::Instances<C> {self.0.air().instances::<C>()}
+    // pub fn instances<C: Contract>(&self) -> Vec<air::Instance<C>> {self.list::<C>().values().collect::<Vec<_>>()}
 
     pub fn emit<E: Event>(&mut self, event: E) {self.1.push(Box::new(event))}
 

@@ -1,8 +1,7 @@
-use crate::event::{self, OnEvent, Key, Event, TickEvent, MouseEvent, MouseState, KeyboardEvent, KeyboardState, MouseButton};
+use crate::event::{self, OnEvent, Key, Event, MouseEvent, MouseState, KeyboardEvent, KeyboardState, MouseButton};
 use crate::{events, Context};
 use crate::drawable::{Drawable, Component, SizedTree};
 use crate::layout::{Stack, Column, Offset, Size, Padding, ScrollAnchor};
-use std::time::Duration;
 
 const TEXT_INPUT_UUID: uuid::Uuid = uuid::uuid!("123e4567-e89b-12d3-a456-426614174000");
 
@@ -155,7 +154,7 @@ impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
             events.push(event);
             return events;
         } else if let Some(KeyboardEvent { state: KeyboardState::Pressed, key, .. }) = event.downcast_ref() {
-            let key = *key;
+            let key = key.clone();
             if let Some(focus) = self.2 {
                 return if focus { vec![event, Box::new(event::TextInput::Edited(key))] } else { Vec::new() };
             }
@@ -180,7 +179,7 @@ impl<D: Drawable + Clone> Scrollable<D> {
     }
 }
 impl<D: Drawable + Clone> OnEvent for Scrollable<D> {
-    fn on_event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(MouseEvent { state: MouseState::Scroll(_, y), position: Some(_) }) = event.downcast_ref::<MouseEvent>() {
             self.0.adjust_scroll(*y);
         }

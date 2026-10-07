@@ -20,6 +20,6 @@ nsvg = "0.5.1"
 dyn-clone = "1.0.20"
 
 
-#maverick_os = { version = "0.3.7", optional = true }
+maverick_os = { path = "../maverick_os" }
 
-air = {path="../air"}
+#air = {path="../air"}
