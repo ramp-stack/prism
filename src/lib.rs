@@ -53,8 +53,8 @@ impl Context {
     }
 
     pub fn me(&self) -> Name {self.0.air().me()}
-    pub fn list<C: Contract>(&self) -> std::collections::HashMap<Id, air::Instance<C>> {self.0.air().list::<C>()}
-    pub fn create<C: Contract>(&self, init: C::Init) -> air::Instance<C> {self.0.air().create::<C>(init)}
+    pub fn list<C: Contract>(&self) -> std::collections::HashMap<Id, air::Instance<C>> {(*self.0.air().instances::<C>().list()).clone()}
+    pub fn create<C: Contract>(&self, init: C::Init) -> air::Instance<C> {self.0.air().instances::<C>().create(init)}
     // pub fn instances<C: Contract>(&self) -> Vec<air::Instance<C>> {self.list::<C>().values().collect::<Vec<_>>()}
 
     pub fn emit<E: Event>(&mut self, event: E) {self.1.push(Box::new(event))}

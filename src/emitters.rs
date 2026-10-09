@@ -129,7 +129,7 @@ impl<D: Drawable + Clone + 'static> TextInput<D> {
 }
 
 impl<D: Drawable + Clone + 'static> OnEvent for TextInput<D> {
-    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+    fn on_event(&mut self, ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
         if let Some(event::Selectable::Selected(selected)) = event.downcast_ref::<event::Selectable>() {
             if let Some(focus) = &mut self.2 {*focus = *selected;}
             return vec![Box::new(event::TextInput::Focused(*selected)), event];
@@ -179,7 +179,10 @@ impl<D: Drawable + Clone> Scrollable<D> {
     }
 }
 impl<D: Drawable + Clone> OnEvent for Scrollable<D> {
-    fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+    fn on_event(&mut self, _ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+        if let Some(event::Scrollable::ScrollTo(y)) = event.downcast_ref::<event::Scrollable>() {
+            self.0.set_scroll(*y); //sized.0.1);
+        }
         if let Some(MouseEvent { state: MouseState::Scroll(_, y), position: Some(_) }) = event.downcast_ref::<MouseEvent>() {
             self.0.adjust_scroll(*y);
         }

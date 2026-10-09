@@ -104,6 +104,9 @@ pub enum TextInput { Hover(bool), Focused(bool), Edited(Key) }
 #[derive(Debug, Clone)]
 pub enum NumericalInput { Delete, Digit(char), Char(char) }
 
+#[derive(Debug, Clone)]
+pub enum Scrollable { ScrollTo(f32) }
+
 macro_rules! impl_event_all_children {
     ( $( $n:ident ),* ) => {
         $(
@@ -115,7 +118,7 @@ macro_rules! impl_event_all_children {
         )*
     };
 }
-impl_event_all_children!(KeyboardEvent, CameraFrame, PickedPhoto, TickEvent, Button, Selectable, Slider, TextInput, NumericalInput);
+impl_event_all_children!(KeyboardEvent, CameraFrame, PickedPhoto, TickEvent, Button, Selectable, Slider, TextInput, NumericalInput, Scrollable);
 
 #[macro_export]
 macro_rules! events {
