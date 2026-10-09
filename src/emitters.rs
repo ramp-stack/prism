@@ -2,39 +2,74 @@ use crate::event::{self, OnEvent, Key, Event, MouseEvent, MouseState, KeyboardEv
 use crate::{events, Context};
 use crate::drawable::{Drawable, Component, SizedTree};
 use crate::layout::{Stack, Column, Offset, Size, Padding, ScrollAnchor};
+use std::time::{Duration, Instant};
 
 const TEXT_INPUT_UUID: uuid::Uuid = uuid::uuid!("123e4567-e89b-12d3-a456-426614174000");
+const MAX_TAP_DURATION: Duration = Duration::from_millis(600);
+const MAX_TAP_MOVEMENT: f64 = 12.0;
+
+#[derive(Debug, Clone, Default)]
+struct PressState {
+    started: Option<Instant>,
+    origin: Option<(f64, f64)>,
+    cancelled: bool,
+}
 
 #[derive(Debug, Component, Clone)]
-pub struct Button<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] bool);
+pub struct Button<D: Drawable + Clone + 'static>(Stack, pub D, #[skip] PressState);
 impl<D: Drawable + Clone + 'static> Button<D> {
-    pub fn new(child: D) -> Self {Button(Stack::default(), child, false)}
+    pub fn new(child: D) -> Self {Button(Stack::default(), child, PressState::default())}
 }
 
 impl<D: Drawable + Clone + 'static> OnEvent for Button<D> {
     fn on_event(&mut self, _ctx: &mut Context, _sized: &SizedTree, event: Box<dyn Event>) -> Vec<Box<dyn Event>> { 
-        if let Some(event) = event.downcast_ref::<MouseEvent>() {
-            match event.state {
-                MouseState::Pressed(MouseButton::Left) if event.position.is_some() => {
-                    self.2 = true;
-                    return events![event::Button::Pressed(true)];
-                },
-                MouseState::Moved | MouseState::Scroll(..) if !crate::IS_MOBILE => {
-                    return events![event::Button::Hover(event.position.is_some())];
-                },
-                MouseState::Released(MouseButton::Left) => {
-                    let result = if self.2 {
-                        match !crate::IS_MOBILE && event.position.is_some() {
-                            true => events![event::Button::Pressed(false), event::Button::Hover(true)],
-                            false => events![event::Button::Pressed(false)]
-                        }
-                    } else {
-                        vec![]
+        if let Some(mouse) = event.downcast_ref::<MouseEvent>() {
+            match mouse.state {
+                MouseState::Pressed(MouseButton::Left) if mouse.position.is_some() => {
+                    let p = mouse.position.unwrap();
+                    self.2 = PressState {
+                        started: Some(Instant::now()),
+                        origin: Some((p.0 as f64, p.1 as f64)),
+                        cancelled: false,
                     };
+                    return events![event::Button::Pressed(true)];
+                }
 
-                    self.2 = false;
-                    return result;
-                },
+                MouseState::Moved | MouseState::Scroll(..)
+                    if crate::IS_MOBILE && self.2.started.is_some() =>
+                {
+                    self.2.cancelled |= match (mouse.state, self.2.origin, mouse.position) {
+                        (MouseState::Moved, Some((x, y)), Some(p)) => {
+                            (p.0 as f64 - x).powi(2) + (p.1 as f64 - y).powi(2)
+                                > MAX_TAP_MOVEMENT.powi(2)
+                        }
+                        _ => true,
+                    };
+                }
+
+                MouseState::Moved | MouseState::Scroll(..) if !crate::IS_MOBILE => {
+                    return events![event::Button::Hover(mouse.position.is_some())];
+                }
+
+                MouseState::Released(MouseButton::Left) => {
+                    let pressed = self.2.started.is_some();
+                    let valid = self.2.started.is_some_and(|t| t.elapsed() <= MAX_TAP_DURATION)
+                        && !self.2.cancelled
+                        && mouse.position.is_some();
+
+                    self.2 = PressState::default();
+
+                    return match (pressed, crate::IS_MOBILE, valid, mouse.position.is_some()) {
+                        (false, _, _, _) => vec![],
+                        (true, true, true, _) => events![event::Button::Pressed(false)],
+                        (true, true, false, _) => events![event::Button::Hover(false)],
+                        (true, false, _, true) => {
+                            events![event::Button::Pressed(false), event::Button::Hover(true)]
+                        }
+                        _ => events![event::Button::Hover(false)],
+                    };
+                }
+
                 _ => {}
             }
         }
