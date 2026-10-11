@@ -433,14 +433,15 @@ impl Column {
 
     pub fn set_scroll(&mut self, val: f32) { if let Some(s) = &mut self.4 { **s.lock().as_mut().unwrap() = val; } }
 }
-
 impl Layout for Column {
     fn request_size(&self, children: Vec<SizeRequest>) -> SizeRequest {
         if children.is_empty() { return SizeRequest::default() };
         let (widths, heights): (Vec<_>, Vec<_>) = children.into_iter().map(|i|
             ((i.min_width(), i.max_width()), (i.min_height(), i.max_height()))
         ).unzip();
-        let spacing = self.0*(heights.len()-1) as f32;
+        // Only children that can have height get spacing between them.
+        let visible = heights.iter().filter(|h| h.1 > 0.0).count();
+        let spacing = self.0 * visible.saturating_sub(1) as f32;
         let width = self.2.get(widths, Size::max);
         let height = Size::add(heights.clone());
         let size_request = match self.4.is_some() {
@@ -453,12 +454,18 @@ impl Layout for Column {
     fn build(&self, col_size: (f32, f32), mut children: Vec<SizeRequest>) -> Vec<Area> {
         let col_size = self.3.adjust_size(col_size);
 
-        let spacing = self.0 * children.len().saturating_sub(1) as f32;
+        // Expand only the children that can have height, so UniformExpand
+        // reserves spacing for them alone; zero-height children get 0.0.
         let ranges: Vec<_> = children.iter().map(|c| (c.min_height(), c.max_height())).collect();
-        let heights = UniformExpand::get(ranges, col_size.1, self.0);
+        let visible: Vec<usize> = (0..ranges.len()).filter(|&i| ranges[i].1 > 0.0).collect();
+        let expanded = UniformExpand::get(visible.iter().map(|&i| ranges[i]).collect(), col_size.1, self.0);
+        let mut heights = vec![0.0; ranges.len()];
+        visible.iter().zip(expanded).for_each(|(&i, h)| heights[i] = h);
+
+        let spacing = self.0 * visible.len().saturating_sub(1) as f32;
         let content_height = heights.iter().sum::<f32>() + spacing;
 
-        let mut offset = 0.0; //Offset::Start.get(col_size.1, content_height).max(0.0);
+        let mut offset = 0.0;
 
         let max_scroll = (content_height - col_size.1).max(0.0);
         let scroll = self.4.as_ref().map(|s| {
@@ -472,7 +479,9 @@ impl Layout for Column {
 
         let mut areas: Vec<_> = children.into_iter().zip(heights).map(|(child, h)| {
             let size = child.get((col_size.0, h));
-            let off_y = { let o = offset; offset += size.1 + self.0; o };
+            let off_y = offset;
+            // A zero-height child takes no room and adds no spacing.
+            if child.max_height() > 0.0 { offset += size.1 + self.0; }
             let n = if is_end {col_size.1 - h + scroll} else {off_y - scroll};
             Area { offset: self.3.adjust_offset((self.1.get(col_size.0, size.0), n)), size }
         }).collect();
@@ -480,7 +489,6 @@ impl Layout for Column {
         if is_end { areas.reverse(); }
         areas
     }
-
 }
 
 
