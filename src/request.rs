@@ -1,6 +1,6 @@
 use downcast_rs::{Downcast, impl_downcast};
 
-use crate::event::Event;
+use crate::events::Event;
 
 pub trait Request: Downcast {
     type Response where Self: Sized;

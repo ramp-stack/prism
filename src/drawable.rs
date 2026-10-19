@@ -1,172 +1,278 @@
-use std::fmt::Debug;
 use std::any::Any;
+use std::fmt::Debug;
 
-use crate::event::*;
-use crate::layout::{SizeRequest, Area, Layout};
 use crate::Context;
-
-use wgpu_canvas::{Instruction, Item, Shape, Image, Text};
+use crate::events::{ChildEvent, DynEvent, EventHandler, MouseButton, MouseEvent, MouseState};
+use crate::hardware::{Image, Player};
 
 use downcast_rs::{Downcast, impl_downcast};
-pub use dyn_clone::{DynClone, clone_trait_object};
+use dyn_clone::{DynClone, clone_trait_object};
 
 pub use prism_proc::Component;
 
-#[derive(Default, Debug, Clone)]
-pub struct RequestTree(pub SizeRequest, pub Vec<RequestTree>);
-
-#[derive(Default, Debug, Clone)]
-pub struct SizedTree(pub Size, pub Vec<(Offset, SizedTree)>);
+pub mod shape;
+pub mod text;
+use shape::{Shape, Variant};
 
 pub type Offset = (f32, f32);
 pub type Rect = (f32, f32, f32, f32);
 pub type Size = (f32, f32);
 
-/// A renderable element in the UI.
-///
-/// The `Drawable` trait is implemented by all visual elements
-/// such as shapes, text, and images.
-#[allow(private_bounds)]
-pub trait Drawable: DynClone + Debug + Any + Downcast {
-    fn request_size(&self) -> RequestTree;
+pub enum Item { Shape(Shape), Text(text::Text), Image(Shape, Image, Option<Color>) }
 
-    fn build(&self, size: Size, request: &RequestTree) -> SizedTree {
-        SizedTree(request.0.get(size), vec![])
-    }
+pub struct Instruction { pub bound: Rect, pub offset: Offset, pub item: Item }
 
-    fn draw(&self, sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<Instruction>;
-
-    fn name(&self) -> String {std::any::type_name_of_val(self).to_string()}
-
-    fn event(&mut self, _ctx: &mut Context, _sized: &SizedTree, _event: Box<dyn Event>) {}
+#[derive(Default, Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Color(pub u8, pub u8, pub u8, pub u8);
+impl Color {
+    pub const WHITE: Self = Color(255, 255, 255, 255);
+    pub const BLACK: Self = Color(0, 0, 0, 255);
+    pub const TRANSPARENT: Self = Color(0, 0, 0, 0);
+    pub const RED: Self = Color(255, 0, 0, 255);
+    pub const GREEN: Self = Color(0, 255, 0, 255);
+    pub const BLUE: Self = Color(0, 0, 255, 255);
+    pub const YELLOW: Self = Color(255, 255, 0, 255);
+    pub const MAGENTA: Self = Color(255, 0, 255, 255);
+    pub const CYAN: Self = Color(0, 255, 255, 255);
 }
 
+#[derive(Debug, Clone)]
+pub struct Icon(pub Image, pub Color);
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, PartialOrd)]
+pub struct SizeRange {
+    pub min_width: f32, pub max_width: f32,
+    pub min_height: f32, pub max_height: f32,
+}
+impl SizeRange {
+    pub fn fixed(size: (f32, f32)) -> Self {Self {
+        min_width: size.0, max_width: size.0,
+        min_height: size.1, max_height: size.1,
+    }}
+    pub fn clamp(&self, size: (f32, f32)) -> (f32, f32) {(
+        size.0.clamp(self.min_width, self.max_width),
+        size.1.clamp(self.min_height, self.max_height),
+    )}
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct RangeTree(pub SizeRange, pub Vec<RangeTree>);
+
+#[derive(Default, Debug, Clone)]
+pub struct LayoutTree(pub Size, pub Vec<(Offset, LayoutTree)>);
+
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct Area { pub offset: Offset, pub size: Size }
+
+pub trait Component: Clone + Debug + 'static {
+    fn children_mut(&mut self) -> Vec<&mut dyn Drawable>;
+    fn children(&self) -> Vec<&dyn Drawable>;
+    fn layout(&self) -> &dyn Layout;
+
+    fn dispatch_event(&mut self, ctx: &mut Context, event: Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>> {
+        EventHandler::dispatch(self, ctx, event)
+    }
+}
+
+pub trait Layout: std::fmt::Debug + DynClone {
+    fn size_range(&self, children: Vec<SizeRange>) -> SizeRange;
+    fn layout(&self, size: Size, children: Vec<SizeRange>) -> Vec<Area>;
+}
+
+impl Layout for Box<dyn Layout> {
+    fn size_range(&self, children: Vec<SizeRange>) -> SizeRange {(**self).size_range(children)}
+    fn layout(&self, size: Size, children: Vec<SizeRange>) -> Vec<Area> {(**self).layout(size, children)}
+}
+clone_trait_object!(Layout);
+
+#[allow(private_bounds)]
+pub trait Drawable: DynClone + Debug + Any + Downcast {
+    fn name(&self) -> String {std::any::type_name_of_val(self).to_string()}
+    fn size_range(&self) -> RangeTree;
+    fn layout(&mut self, size: Size, range_tree: &RangeTree) -> LayoutTree {
+        LayoutTree(range_tree.0.clamp(size), vec![])
+    }
+    fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction>;
+    fn event(&mut self, _ctx: &mut Context, _sized: &LayoutTree, _event: Box<dyn DynEvent>) {}
+}
 clone_trait_object!(Drawable);
 impl_downcast!(Drawable);
 
-impl Drawable for Box<dyn Drawable> {
-    fn request_size(&self) -> RequestTree {Drawable::request_size(&**self)}
-    fn build(&self, size: Size, request: &RequestTree) -> SizedTree {
-        Drawable::build(&**self, size, request)
+impl<C: Component> Drawable for C {
+    fn size_range(&self) -> RangeTree {
+        let requests = self.children().into_iter().map(Drawable::size_range).collect::<Vec<_>>();
+        let info = requests.iter().map(|i| i.0).collect::<Vec<_>>();
+        let r = Component::layout(self).size_range(info);
+        RangeTree(r, requests)
     }
-    fn draw(&self, sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
+
+    fn layout(&mut self, size: Size, request: &RangeTree) -> LayoutTree {
+        let size = request.0.clamp(size);
+        let children = request.1.iter().map(|b| b.0).collect::<Vec<_>>();
+        LayoutTree(size, Component::layout(self).layout(size, children).into_iter()
+            .zip(self.children_mut()).zip(request.1.iter())
+            .map(|((Area {offset, size}, child), branch)| (offset, child.layout(size, branch)))
+            .collect())
+    }
+
+    fn draw(&self, sized: &LayoutTree, poffset: Offset, bound: Rect) -> Vec<Instruction> {
+        sized.1.iter().zip(self.children()).flat_map(|((offset, branch), child)| {
+            let size = branch.0;
+            let poffset = (poffset.0 + offset.0, poffset.1 + offset.1);
+
+            let left = bound.0.max(poffset.0);
+            let top = bound.1.max(poffset.1);
+            let bound = (
+                left, top, (bound.0 + bound.2).min(poffset.0 + size.0) - left,
+                (bound.1 + bound.3).min(poffset.1 + size.1) - top,
+            );
+
+            if bound.2 > 0.0 && bound.3 > 0.0 {child.draw(branch, poffset, bound)} else {vec![]}
+        }).collect()
+    }
+
+    fn event(&mut self, ctx: &mut Context, sized: &LayoutTree, event: Box<dyn DynEvent>) {
+        let areas: Vec<_> = sized.1.iter()
+            .map(|(offset, branch)| Area {offset: *offset, size: branch.0}).collect();
+        for event in Component::dispatch_event(self, ctx, event) {
+            let mut events: Vec<Option<Box<dyn DynEvent>>> = areas.iter().map(|_| None).collect();
+            let mut slots: Vec<_> = areas.iter().zip(&mut events)
+                .map(|(area, event)| ChildEvent {area, event}).collect();
+            event.pass_dyn(ctx, &mut slots);
+            for ((event, child), (_, branch)) in
+                events.into_iter().zip(self.children_mut()).zip(&sized.1) {
+                if let Some(event) = event {child.event(ctx, branch, event);}
+            }
+        }
+    }
+}
+
+impl Drawable for Box<dyn Drawable> {
+    fn name(&self) -> String {Drawable::name(&**self)}
+    fn size_range(&self) -> RangeTree {Drawable::size_range(&**self)}
+    fn layout(&mut self, size: Size, request: &RangeTree) -> LayoutTree {
+        Drawable::layout(&mut **self, size, request)
+    }
+    fn draw(&self, sized: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
         Drawable::draw(&**self, sized, offset, bound)
     }
-
-    fn name(&self) -> String {Drawable::name(&**self)}
-
-    fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {
+    fn event(&mut self, ctx: &mut Context, sized: &LayoutTree, event: Box<dyn DynEvent>) {
         Drawable::event(&mut **self, ctx, sized, event)
     }
 }
 
-impl<D: Drawable + Debug + Any + Clone> Drawable for Option<D> {
-    fn request_size(&self) -> RequestTree {
-        self.as_ref().map(|d| Drawable::request_size(d)).unwrap_or_default()
+impl Drawable for Shape {
+    fn size_range(&self) -> RangeTree {RangeTree(SizeRange::fixed(self.size()), vec![])}
+    fn draw(&self, _layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
+        vec![Instruction {offset, bound, item: Item::Shape(*self)}]
     }
-
-    fn build(&self, size: Size, request: &RequestTree) -> SizedTree {
-        self.as_ref().map(|d| Drawable::build(d, size, request)).unwrap_or_default()
-    }
-
-    fn draw(&self, sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
-        self.as_ref().map(|d| Drawable::draw(d, sized, offset, bound)).unwrap_or_default()
-    }
-
-    fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {
-        if let Some(d) = self.as_mut() { Drawable::event(d, ctx, sized, event); }
-    }
-
-    fn name(&self) -> String { self.as_ref().map(|d| Drawable::name(d)).unwrap_or("None".to_string()) }
 }
 
-/// A composable UI element with children.
-///
-/// `Component` represents higher-level UI building blocks. 
-/// Unlike simple `Drawable`s, components can contain other 
-/// drawables and define their own layout, rendering, and event handling.
-pub trait Component: Clone + Debug where Self: 'static {
-    fn children_mut(&mut self) -> Vec<&mut dyn Drawable>;
-    fn children(&self) -> Vec<&dyn Drawable>;
-    fn layout(&self) -> &dyn Layout;
+impl Drawable for text::Text {
+    fn size_range(&self) -> RangeTree {RangeTree(SizeRange::fixed(self.size()), vec![])}
+    fn draw(&self, _layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
+        vec![Instruction {offset, bound, item: Item::Text(self.clone())}]
+    }
 }
 
-impl<C: Component + Clone + 'static + OnEvent> Drawable for C {
-    fn request_size(&self) -> RequestTree {
-        let requests = self.children().into_iter().map(Drawable::request_size).collect::<Vec<_>>();
-        let info = requests.iter().map(|i| i.0).collect::<Vec<_>>();
-        let r = self.layout().request_size(info);
-        RequestTree(r, requests)
+impl Drawable for Image {
+    fn size_range(&self) -> RangeTree {
+        RangeTree(SizeRange {
+            min_width: 0.0, max_width: f32::INFINITY,
+            min_height: 0.0, max_height: f32::INFINITY,
+        }, vec![])
     }
-
-    fn build(&self, size: Size, request: &RequestTree) -> SizedTree {
-        let size = request.0.get(size);
-        let children = request.1.iter().map(|b| b.0).collect::<Vec<_>>();
-        SizedTree(
-            size,
-            self.layout().build(size, children).into_iter()
-            .zip(self.children()).zip(request.1.iter())
-            .map(|((Area{offset, size}, child), branch)| {
-                (offset, child.build(size, branch))
-            }).collect()
-        )
+    fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
+        let shape = Shape::new(layout.0.0, layout.0.1, Color::WHITE, Variant::Rectangle);
+        vec![Instruction {offset, bound, item: Item::Image(shape, self.clone(), None)}]
     }
+}
 
-    fn draw(&self, sized: &SizedTree, poffset: Offset, bound: Rect) -> Vec<Instruction> {
-        sized.1.iter().zip(self.children()).flat_map(|((offset, branch), child)| {
-            let size = branch.0;
-            let poffset = (poffset.0+offset.0, poffset.1+offset.1);
-
-            let bound = (
-                bound.0.max(poffset.0), bound.1.max(poffset.1),//New bound offset
-                bound.2.min((offset.0 + size.0).max(0.0)), bound.3.min((offset.1 + size.1).max(0.0))//New bound size
-            );
-
-            if bound.2 != 0.0 && bound.3 != 0.0 {
-                child.draw(branch, poffset, bound)
-            } else {vec![]}
-        }).collect()
+impl Drawable for Player {
+    fn size_range(&self) -> RangeTree {self.frame().size_range()}
+    fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
+        self.frame().draw(layout, offset, bound)
     }
-
-    fn event(&mut self, ctx: &mut Context, sized: &SizedTree, event: Box<dyn Event>) {
-        let children = sized.1.iter().map(|(o, branch)| Area{offset: *o, size: branch.0}).collect::<Vec<_>>();
-        for event in OnEvent::on_event(self, ctx, sized, event) {
-            event.pass(ctx, &children).into_iter().zip(self.children_mut()).zip(sized.1.iter()).for_each(
-                |((e, child), branch)| if let Some(e) = e {child.event(ctx, &branch.1, e);}
-            );
+    fn event(&mut self, _ctx: &mut Context, _layout: &LayoutTree, event: Box<dyn DynEvent>) {
+        if let Some(MouseEvent {position: Some(_), state: MouseState::Pressed(MouseButton::Left)}) =
+            event.downcast_ref() {
+            if self.is_playing() {self.stop();} else {self.start();}
         }
     }
 }
 
-#[macro_export]
-macro_rules! drawables {
-    ( $( $x:expr ),* $(,)? ) => {
-        {
-            vec![
-                $(Box::new($x) as Box<dyn $crate::drawable::Drawable>),*
-            ]
-        }
-    };
+impl Drawable for Icon {
+    fn size_range(&self) -> RangeTree {self.0.size_range()}
+    fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
+        let shape = Shape::new(layout.0.0, layout.0.1, Color::WHITE, Variant::Rectangle);
+        vec![Instruction {offset, bound, item: Item::Image(shape, self.0.clone(), Some(self.1))}]
+    }
 }
 
-macro_rules! impl_drawable {
-    ( $( $n:ident: $( $x:expr )* ),* ) => {
-        $(
-            impl Drawable for $n {
-                fn request_size(&self) -> RequestTree {
-                    RequestTree(SizeRequest::fixed(self.size()), vec![])
-                }
+pub trait Drawables {
+    fn drawables(&self) -> Vec<&dyn Drawable>;
+    fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable>;
+}
 
-                fn draw(&self, _sized: &SizedTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
-                    vec![Instruction(wgpu_canvas::Area{offset, bounds: Some(bound)}, ($( $x )*)(self))]
-                }
+impl<D: Drawable> Drawables for D {
+    fn drawables(&self) -> Vec<&dyn Drawable> {vec![self]}
+    fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {vec![self]}
+}
+
+impl<D: Drawables> Drawables for Vec<D> {
+    fn drawables(&self) -> Vec<&dyn Drawable> {self.iter().flat_map(Drawables::drawables).collect()}
+    fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {
+        self.iter_mut().flat_map(Drawables::drawables_mut).collect()
+    }
+}
+
+impl<D: Drawables> Drawables for [D] {
+    fn drawables(&self) -> Vec<&dyn Drawable> {self.iter().flat_map(Drawables::drawables).collect()}
+    fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {
+        self.iter_mut().flat_map(Drawables::drawables_mut).collect()
+    }
+}
+
+impl<D: Drawables, const N: usize> Drawables for [D; N] {
+    fn drawables(&self) -> Vec<&dyn Drawable> {self.as_slice().drawables()}
+    fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {self.as_mut_slice().drawables_mut()}
+}
+
+impl<D: Drawables> Drawables for Option<D> {
+    fn drawables(&self) -> Vec<&dyn Drawable> {self.iter().flat_map(Drawables::drawables).collect()}
+    fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {
+        self.iter_mut().flat_map(Drawables::drawables_mut).collect()
+    }
+}
+
+impl<K, D: Drawables, S> Drawables for std::collections::HashMap<K, D, S> {
+    fn drawables(&self) -> Vec<&dyn Drawable> {self.values().flat_map(Drawables::drawables).collect()}
+    fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {
+        self.values_mut().flat_map(Drawables::drawables_mut).collect()
+    }
+}
+
+impl<K, D: Drawables> Drawables for std::collections::BTreeMap<K, D> {
+    fn drawables(&self) -> Vec<&dyn Drawable> {self.values().flat_map(Drawables::drawables).collect()}
+    fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {
+        self.values_mut().flat_map(Drawables::drawables_mut).collect()
+    }
+}
+
+macro_rules! tuple_drawables {
+    () => {};
+    ($type:ident:$field:ident $(, $tail:ident:$rest:ident)*) => {
+        impl<$type: Drawables, $($tail: Drawables),*> Drawables for ($type, $($tail,)*) {
+            fn drawables(&self) -> Vec<&dyn Drawable> {
+                let ($field, $($rest,)*) = self;
+                [$field.drawables(), $($rest.drawables()),*].into_iter().flatten().collect()
             }
-        )*
+            fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {
+                let ($field, $($rest,)*) = self;
+                [$field.drawables_mut(), $($rest.drawables_mut()),*].into_iter().flatten().collect()
+            }
+        }
+        tuple_drawables!($($tail:$rest),*);
     };
 }
-impl_drawable!(
-    Item: |s: &Item| s.clone(),
-    Shape: |s: &Shape| Item::Shape(*s),
-    Text: |s: &Text| Item::Text(s.clone()),
-    Image: |s: &Image| Item::Image(s.clone())
-);
+tuple_drawables!(A:a, B:b, C:c, D:d, E:e, F:f, G:g, H:h, I:i, J:j, K:k, L:l);
