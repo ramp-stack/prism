@@ -33,6 +33,8 @@ pub trait Handler {
     fn air(&self) -> &maverick_os::air::Context;
     fn start_camera(&self) -> Box<dyn Camera>;
     fn pick_photo(&self);
+    fn pick_media(&self) {}
+    fn play_video(&self, _mp4: std::sync::Arc<[u8]>) {}
 
     fn get_safe_area(&self) -> (f32, f32, f32, f32);
     fn share_social(&self, data: String);
@@ -61,6 +63,8 @@ impl Context {
 
     pub fn start_camera(&self) -> Box<dyn Camera> {self.0.start_camera()}
     pub fn pick_photo(&self) {self.0.pick_photo()}
+    pub fn pick_media(&self) {self.0.pick_media()}
+    pub fn play_video(&self, mp4: std::sync::Arc<[u8]>) {self.0.play_video(mp4)}
 
     pub fn get_safe_area(&self) -> (f32, f32, f32, f32) {self.0.get_safe_area()}
     pub fn share_social(&self, data: String) {self.0.share_social(data)}

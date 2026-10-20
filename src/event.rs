@@ -86,6 +86,19 @@ pub struct CameraFrame(pub RgbaImage);
 #[derive(Clone, Debug)]
 pub struct PickedPhoto(pub RgbaImage);
 
+#[derive(Clone, Debug)]
+pub enum PickedMedia {
+    Photo(std::sync::Arc<RgbaImage>),
+    Video(std::sync::Arc<PickedVideo>),
+}
+
+#[derive(Clone, Debug)]
+pub struct PickedVideo {
+    pub mp4: Vec<u8>,
+    pub poster: RgbaImage,
+    pub duration: std::time::Duration,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct TickEvent;
 
@@ -107,18 +120,19 @@ pub enum NumericalInput { Delete, Digit(char), Char(char) }
 #[derive(Debug, Clone)]
 pub enum Scrollable { ScrollTo(f32) }
 
+#[macro_export]
 macro_rules! impl_event_all_children {
-    ( $( $n:ident ),* ) => {
+    ( $( $n:ident ),* $(,)? ) => {
         $(
-            impl Event for $n {
-                fn pass(self: Box<Self>, _ctx: &mut Context, children: &[Area]) -> Vec<Option<Box<dyn Event>>> {
-                    children.iter().map(|_| Some(self.clone() as Box<dyn Event>)).collect()
+            impl $crate::event::Event for $n {
+                fn pass(self: Box<Self>, _ctx: &mut $crate::Context, children: &[$crate::layout::Area]) -> Vec<Option<Box<dyn $crate::event::Event>>> {
+                    children.iter().map(|_| Some(self.clone() as Box<dyn $crate::event::Event>)).collect()
                 }
-            }       
+            }
         )*
     };
 }
-impl_event_all_children!(KeyboardEvent, CameraFrame, PickedPhoto, TickEvent, Button, Selectable, Slider, TextInput, NumericalInput, Scrollable);
+impl_event_all_children!(PickedMedia, KeyboardEvent, CameraFrame, PickedPhoto, TickEvent, Button, Selectable, Slider, TextInput, NumericalInput, Scrollable);
 
 #[macro_export]
 macro_rules! events {
