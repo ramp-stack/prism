@@ -61,36 +61,32 @@ Components represent higher-level composable structures. A component may contain
 
 This structure allows Prism to represent the UI as a hierarchical tree where complex components are composed from simpler visual elements.
 
-### Caret layout
+### Layout
 
-`Drawable::caret(&LayoutTree)` returns `Option<Caret>` for an active editor. `Caret` contains a
-stable editor ID and a local rectangle whose height is the edited line's height. Return `None`
-when the editor is inactive. `drawable::text::Text::cursor_rect()` measures that rectangle using
-the same wrapped lines as text rendering, including an empty final line after a newline.
+Drawables that need their children's completed geometry own that work in `Drawable::layout`.
+Pelican's text editor positions its cursor there after text wrapping, and its growing grids
+record the measured viewport for `OnChange`. The existing `Bin` container handles ordinary
+child layout, drawing, and event dispatch.
 
-Components find a descendant caret and translate it through their laid-out child offsets by
-default. A custom `Drawable` wrapper must forward `caret` just as it forwards layout and events.
-Hidden children excluded from `children()` do not participate.
-
-Derived components can override this query with `#[caret]` and an inherent
-`fn caret(&self, layout: &LayoutTree) -> Option<Caret>`. Add `#[after_layout]` and an inherent
-`fn after_layout(&mut self, layout: &mut LayoutTree)` to adjust child offsets after the children
-have laid out. Hooks must preserve the child order and tree structure. Pelican uses this hook
-to position the visible caret after text wrapping.
+`drawable::text::Text::cursor_rect()` measures the cursor using the same wrapped lines as
+text rendering, including an empty final line after a newline.
 
 Before drawing or dispatching input, Prism settles changed size ranges with up to four extra
-layout passes. Layout hooks must converge: changes to text width should
+layout passes. Layout calculations must converge: changes to text width should
 produce stable size ranges, not toggle between requests.
 
 ### Images and icons
 
 `hardware::Image` is a shared raster content handle supplied by the backend.
-`hardware.read_image(reader)` reads encoded content and its intrinsic dimensions without decoding
+`Image::read(reader)` reads encoded content and its intrinsic dimensions without decoding
 all pixels. `image.dimensions()` returns its intrinsic `(width, height)`.
-`Image` implements `Deref<Target = Arc<RgbaImage>>`; the first pixel access decodes lazily.
-The backend retains the shared pixels, using the existing corrupted-image artwork if decoding fails.
-`hardware.image_from_rgba(pixels)` accepts generated pixels directly. Clones share the content;
-changing its display size reuses the same decoded pixels and GPU texture.
+`image.pixels()` returns `((width, height), &[u8])`: the actual decoded dimensions and tightly packed
+RGBA8 bytes. The first access decodes lazily, and clones reuse the same buffer. If decoding fails,
+the backend supplies the existing corrupted-image artwork and its dimensions.
+`Image::from_rgba((width, height), pixels)` takes ownership of generated RGBA bytes. Clones share
+the content; changing its display size reuses the same decoded pixels and GPU texture.
+`image.write(writer, ImageFormat::Png)` encodes to any `Write` destination. `ImageFormat` supports
+PNG, JPEG, WebP, GIF, BMP, ICO, TIFF, and QOI, and provides each format's file extension.
 
 `drawable::Svg::read(reader)` validates SVG content and records its intrinsic dimensions. It is a
 separate drawable, rasterized at the physical display size with a bounded shared cache.
@@ -106,12 +102,14 @@ source alpha by color alpha. A fully transparent fill remains transparent.
 The instruction's bounds still clip the result. Display sizes use logical units; source image
 dimensions remain pixel dimensions.
 
-`hardware::Media` represents audio, video, or both. `hardware.read_media(reader)` imports a
+`hardware::Media` represents audio, video, or both. `Media::read(reader)` imports a
 complete file, including animated GIFs. `copy(range, Tracks::Audio)` selects an independent
 audio timeline; `Tracks::Video` and `Tracks::Both` select the other combinations.
 `replace(range, &replacement, tracks)` edits those tracks, and `append(&media)` adds a segment.
-Clones share edits. Use the hardware factories to create an empty timeline, samples, or an image
-with an explicit duration.
+Clones share edits. `Media::new()` creates an empty timeline, `Media::try_from(sound)` imports
+samples, and `Media::try_from((image, duration))` creates a still-image segment. These constructors
+match Maverick and do not require a Hardware handle. Ramp supplies the backend registration.
+With Ramp, Media uses Maverick's runtime, which normal application startup initializes.
 
 `hardware.pick::<Visual>()` selects an image or a video. `pick::<Video>()` selects video while
 preserving its audio track; `pick::<Audio>()` selects an audio-only asset. Each also supports
@@ -134,7 +132,7 @@ subscription. Audio-only media uses the same interface with `image: None`; contr
 the current image when video is present.
 
 Ramp converts Maverick's frame values at the backend boundary. Prism forwards those snapshots
-through `ChangeSource` and `OnChange` without constructing a second playback state or timer.
+through `OnChange` by awaiting `Player::next()` without constructing a second playback state or timer.
 Drawing reads `frame()`; layout reads the content dimensions without consuming an update.
 
 `media.write(writer, Format::Mp4_Mpeg4p2_Aac)` explicitly selects the container and codecs.
@@ -210,9 +208,10 @@ impl<L: Layout + Clone + 'static, D: Drawable + Clone> GenericComponent<L, D> {
 
 ### Change notifications
 
-A `ChangeSource` exposes `next().await`, which returns `Some(update)` when data changes and
-`None` when the source is finished. Dropping a pending wait must preserve unread updates and
-any scheduled deadline. The source stays in its component; waiting does not clone it.
+`OnChange` awaits the future supplied by its attribute. Handles expose their own asynchronous
+methods, such as `Instance::next()`, `Player::next()`, `Picked::next()`, and `Timer::next()`.
+Dropping a pending wait must preserve unread updates and any scheduled deadline.
+The source stays in its component; waiting does not clone it.
 
 Put `#[on_change(source_expression)]` on each handler implementation. The expression returns a
 cancelable future whose output must match the handler's update type. Use `#[skip]` on source
@@ -248,48 +247,63 @@ require concrete component and update types.
 
 Each source expression can borrow one top-level field, including tuple fields. A field can have
 one registered listener. The derive borrows those fields and child drawables independently,
-and returns one `changed() -> ChangeFuture<'_>`. `Change::select` races these futures using
+and returns one `listen() -> ListenFuture<'_>`. `ChangeHandler::select` races these futures using
 `FuturesUnordered`, randomizing their initial order so continuously ready fields do not always
-take priority. The completed future returns a deferred `Change`; Prism drops competing waits
-before applying the handler with mutable access to the component and `Context`. Callbacks run
-serially on the UI thread. No component needs a task context or a waker.
+take priority. The result contains the winning branch path and its owned update value.
+Competing waits are dropped before `update(ctx, path, value)` passes `Context` down that path
+and calls the registered handler. No callbacks are returned or stored in the component tree.
+`Drawable::changed(ctx).await` performs both steps and returns `()`. Handlers run serially on
+the UI thread; no component needs a task context or a waker.
 
 A registered drawable field is watched by its owner's handler instead of recursively waiting
 on that field. This lets an owner observe a displayed `Player` once. Other children are
 traversed automatically. Manual `Component` and `Drawable` implementations also return a single
-`changed()` future. `Change::child` and `Change::map` route its result through the same container;
-apply it before changing that container. For custom aggregation, put `#[changed]` on a component
-and implement its own `fn changed(&mut self) -> ChangeFuture<'_>`. That method owns all listening,
-while the derive still supplies child and layout methods. Enum components aggregate their
-children; variant-specific sources need custom aggregation.
+`listen()` future and implement `update(&mut self, ctx, path, value)` to handle its result.
+`ListenFuture` carries `(Vec<usize>, Box<dyn Any>)`; each `ChangeHandler::select` appends the
+winning branch's original index, and `update` pops it before dispatching to that branch.
+Even a single branch adds its index. Transparent wrappers forward both methods unchanged.
+Apply the update before changing the container or the order of its children.
 
-Built-in sources include Air `Instance<C>`, `Instances<C>`, and `Pending<R>`, hardware `Picked<T>`,
-`Player` and `Timer`. `Option<S>` is inactive while `None`; `BTreeMap<K, S>` waits
-concurrently and returns a batch of ready `(key, update)` values; `VecDeque<S>` consumes sources
-in order. Sources behind `Rc<RefCell<_>>` must be moved into their owner before this migration;
-Prism does not hold runtime mutable borrows across awaits.
+For custom aggregation, put `#[listen]` on a component and implement inherent `listen` and
+`update` methods with those signatures. The derive delegates both methods while still supplying
+children and layout. This override replaces all automatic listening and dispatch, including
+registered source fields; the custom methods must include every source they want to observe.
+Enum components aggregate their children; variant-specific sources need custom aggregation.
+This routing keeps the context in Prism until a listener completes and does not require
+additional fields or shared mutable context.
 
-For these optional or finite sources, use
-`#[on_change(ChangeSource::changed(&mut self.source))]` and import `ChangeSource`. This adapter
-returns the update itself and stays pending if `next()` returns `None`, avoiding repeated
-notifications from an inactive source. An empty drawable tree also stays pending.
+Air `Instance<C>`, `Instances<C>`, and `Pending<R>` and hardware `Player` retain their native
+`next()` futures. `Picked<T>::next()` returns this handle's selection once, then stays pending;
+`get().await` and `try_get()` retain access to the cached result. Picker clones share the pending
+operation and stored result, with one notification per handle. Dropping the final handle cancels
+a pending selection.
+
+Optional handles are handled explicitly in the listener expression:
+
+```rust,ignore
+#[on_change(async {
+    match &mut self.picker {
+        Some(picker) => picker.next().await,
+        None => std::future::pending().await,
+    }
+})]
+```
+
+Collection owners select or sequence the futures they need using ordinary future combinators;
+Prism does not impose collection-specific waiting behavior. An empty drawable tree stays pending.
+Handles behind `Rc<RefCell<_>>` must be moved into their owner before waiting; Prism does not hold
+runtime mutable borrows across awaits.
 
 Initialize the view from its source's current state. For playback, `Player::frame()` establishes
-the observation baseline before waiting for new frames. Pickers deliver their result once through `OnChange`;
-`get().await` and `try_get()` retain access to the cached result. Picker clones share the pending
-operation and stored result, with one change notification per handle. Dropping the final handle
-cancels a pending selection. Timers are one-shot: only an
-explicit `reset()` schedules another update, and cancelling a wait does not restart its clock.
+the observation baseline before waiting for new frames. Timers are one-shot: `next().await`
+returns `()` once and disarms the timer. Only an explicit `reset()` schedules another update;
+waiting on a disarmed timer stays pending, and cancelling a wait does not restart its clock.
 
 `Prism::changed().await` waits for a source update or already queued events. `draw()` drains
 queued events and immediately ready changes, settles layout, and builds instructions without
 broadcasting a frame event. Maverick waits for native inputs, scheduled input futures, and
 application changes. Native momentum and keyboard animation schedule work only while active.
 Playback services still have their separate scheduling; this change does not remove those timers.
-
-Field-level `#[on_change]`, `OnChange<Source>`, and `changes() -> Vec<ChangeFuture<'_>>` are
-replaced by the implementation attribute, tagged update handlers, and single `changed()` future.
-
 
 ## Emitters
 

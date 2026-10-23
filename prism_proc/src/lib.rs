@@ -5,29 +5,18 @@ use syn::{Error, Type, parse_macro_input};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-#[proc_macro_derive(
-    Component, attributes(skip, on_dyn_event, caret, after_layout, after_event, changed)
-)]
+#[proc_macro_derive(Component, attributes(skip, on_dyn_event, listen))]
 pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let mut dynamic = false;
-    let mut caret = false;
-    let mut after_layout = false;
-    let mut after_event = false;
-    let mut custom_changed = false;
+    let mut custom_listen = false;
     for attribute in &input.attrs {
         let (name, enabled) = if attribute.path().is_ident("on_dyn_event") {
             ("on_dyn_event", &mut dynamic)
-        } else if attribute.path().is_ident("caret") {
-            ("caret", &mut caret)
-        } else if attribute.path().is_ident("after_layout") {
-            ("after_layout", &mut after_layout)
-        } else if attribute.path().is_ident("after_event") {
-            ("after_event", &mut after_event)
-        } else if attribute.path().is_ident("changed") {
-            ("changed", &mut custom_changed)
+        } else if attribute.path().is_ident("listen") {
+            ("listen", &mut custom_listen)
         } else if attribute.path().is_ident("on_change") {
             return Error::new_spanned(
                 attribute, "place #[on_change(source)] on an OnChange implementation"
@@ -44,7 +33,7 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
         *enabled = true;
     }
 
-    let (children, children_mut, layout, changes) = match &input.data {
+    let (children, children_mut, layout, listen, update) = match &input.data {
         Data::Struct(data) => {
             let mut fields = data.fields.iter().enumerate();
             let (_, first) = fields.next()
@@ -59,8 +48,8 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                 }).collect();
             assert!(!members.is_empty(), "Component requires at least one child");
             let count = members.len();
-            let changes = match ChangeFields::expand(&data.fields, false) {
-                Ok(changes) => changes,
+            let (listen, update) = match ChangeFields::expand(&data.fields, false) {
+                Ok(methods) => methods,
                 Err(error) => return error.to_compile_error().into(),
             };
 
@@ -78,14 +67,15 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                     children.into_iter().flatten().collect()
                 },
                 quote! {&self.#layout},
-                changes,
+                listen, update,
             )
         }
         Data::Enum(data) => {
             let mut children_arms = Vec::new();
             let mut children_mut_arms = Vec::new();
             let mut layout_arms = Vec::new();
-            let mut changes_arms = Vec::new();
+            let mut listen_arms = Vec::new();
+            let mut update_arms = Vec::new();
 
             for variant in &data.variants {
                 let variant_name = &variant.ident;
@@ -104,16 +94,19 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                         (field.ident.as_ref().unwrap(), format_ident!("__prism_child_{}", index))
                     }).unzip();
                 let count = members.len();
-                let changes = match ChangeFields::expand(&variant.fields, true) {
-                    Ok(changes) => changes,
+                let (listen, update) = match ChangeFields::expand(&variant.fields, true) {
+                    Ok(methods) => methods,
                     Err(error) => return error.to_compile_error().into(),
                 };
-                let (change_members, change_bindings): (Vec<_>, Vec<_>) =
+                let (source_members, source_bindings): (Vec<_>, Vec<_>) =
                     variant.fields.iter().enumerate().skip(1).map(|(index, field)| {
                         (field.ident.as_ref().unwrap(), format_ident!("__prism_child_{}", index))
                     }).unzip();
-                changes_arms.push(quote! {
-                    Self::#variant_name {#(#change_members: #change_bindings,)* ..} => {#changes}
+                listen_arms.push(quote! {
+                    Self::#variant_name {#(#source_members: #source_bindings,)* ..} => {#listen}
+                });
+                update_arms.push(quote! {
+                    Self::#variant_name {#(#source_members: #source_bindings,)* ..} => {#update}
                 });
 
                 children_arms.push(quote! {
@@ -139,13 +132,16 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
                 quote! {match self {#(#children_arms),*}},
                 quote! {match self {#(#children_mut_arms),*}},
                 quote! {match self {#(#layout_arms),*}},
-                quote! {match self {#(#changes_arms),*}},
+                quote! {match self {#(#listen_arms),*}},
+                quote! {match self {#(#update_arms),*}},
             )
         }
         Data::Union(_) => panic!("Cannot implement Component for a union"),
     };
 
-    let changed = if custom_changed {quote! {Self::changed(self)}} else {changes};
+    let (listen, update) = if custom_listen {
+        (quote! {Self::listen(self)}, quote! {Self::update(self, ctx, path, update)})
+    } else {(listen, update)};
     let sources = match &input.data {
         Data::Struct(data) => {
             let methods = ChangeFields::sources(&data.fields);
@@ -161,33 +157,17 @@ pub fn derive_component(input: proc_macro::TokenStream) -> proc_macro::TokenStre
             Self::on_event(self, ctx, event)
         }
     });
-    let caret = caret.then(|| quote! {
-        fn caret(&self, layout: &prism::drawable::LayoutTree) -> Option<prism::drawable::Caret> {
-            Self::caret(self, layout)
-        }
-    });
-    let after_layout = after_layout.then(|| quote! {
-        fn after_layout(&mut self, layout: &mut prism::drawable::LayoutTree) {
-            Self::after_layout(self, layout)
-        }
-    });
-
-    let after_event = after_event.then(|| quote! {
-        fn after_event(&mut self, ctx: &mut prism::Context, event: &dyn prism::events::DynEvent, pointer_claimed: bool) {
-            Self::after_event(self, ctx, event, pointer_claimed)
-        }
-    });
 
     quote! {
         impl #impl_generics prism::drawable::Component for #name #ty_generics #where_clause {
             fn children(&self) -> Vec<&dyn prism::drawable::Drawable> {#children}
             fn children_mut(&mut self) -> Vec<&mut dyn prism::drawable::Drawable> {#children_mut}
             fn layout(&self) -> &dyn prism::drawable::Layout {#layout}
-            fn changed(&mut self) -> ::prism::events::ChangeFuture<'_> {#changed}
+            fn listen(&mut self) -> ::prism::events::ListenFuture<'_> {#listen}
+            fn update(&mut self, ctx: &mut prism::Context, mut path: Vec<usize>, update: Box<dyn ::std::any::Any>) {
+                #update
+            }
             #on_event
-            #caret
-            #after_layout
-            #after_event
         }
         #sources
     }.into()
@@ -205,8 +185,9 @@ pub fn on_change(args: proc_macro::TokenStream, input: proc_macro::TokenStream) 
 
 struct ChangeFields;
 impl ChangeFields {
-    fn expand(fields: &Fields, bindings: bool) -> syn::Result<proc_macro2::TokenStream> {
+    fn expand(fields: &Fields, bindings: bool) -> syn::Result<(proc_macro2::TokenStream, proc_macro2::TokenStream)> {
         let mut waits = Vec::new();
+        let mut updates = Vec::new();
         for (index, field) in fields.iter().enumerate() {
             if let Some(attribute) = field.attrs.iter()
                 .find(|attr| attr.path().is_ident("on_change")) {
@@ -223,28 +204,48 @@ impl ChangeFields {
             let reference = if bindings {quote!(#binding)} else {quote!(&mut self.#member)};
             let children = (!skipped).then(|| quote! {
                 for child in ::prism::drawable::Drawables::drawables_mut(#reference) {
-                    let child_index = index;
-                    index += 1;
-                    let next = ::prism::drawable::Drawable::changed(child);
-                    changes.push(Box::pin(async move {next.await.child::<Self>(child_index)}));
+                    listeners.push(::prism::drawable::Drawable::listen(child));
                 }
             });
-            let count = (!skipped).then(|| quote! {
-                index += ::prism::drawable::Drawables::drawables(#reference).len();
+            let child_updates = (!skipped).then(|| quote! {
+                for child in ::prism::drawable::Drawables::drawables_mut(#reference) {
+                    if index == selected {
+                        child.update(ctx, path, update);
+                        return
+                    }
+                    index += 1;
+                }
             });
             waits.push(quote! {
                 if let Some(handler) = ::prism::events::ChangeHandler::find::<Self>(#field_name) {
-                    #count
-                    changes.push((handler.listen)(#reference));
+                    let next = (handler.listen)(#reference);
+                    listeners.push(Box::pin(async move {(vec![], next.await)}));
                 } else {#children}
             });
+            updates.push(quote! {
+                if let Some(handler) = ::prism::events::ChangeHandler::find::<Self>(#field_name) {
+                    if index == selected {
+                        assert!(path.is_empty());
+                        (handler.call)(self, ctx, update);
+                        return
+                    }
+                    index += 1;
+                } else {#child_updates}
+            });
         }
-        Ok(quote! {
-            let mut changes: Vec<::prism::events::ChangeFuture<'_>> = Vec::new();
-            let mut index = 0;
-            #(#waits)*
-            Box::pin(::prism::events::Change::select(changes))
-        })
+        Ok((
+            quote! {
+                let mut listeners: Vec<::prism::events::ListenFuture<'_>> = Vec::new();
+                #(#waits)*
+                Box::pin(::prism::events::ChangeHandler::select(listeners))
+            },
+            quote! {
+                let selected = path.pop().unwrap();
+                let mut index = 0;
+                #(#updates)*
+                unreachable!("listener path no longer matches the component")
+            },
+        ))
     }
 
     fn sources(fields: &Fields) -> proc_macro2::TokenStream {
@@ -432,11 +433,13 @@ impl Registration {
                     field: #field_name,
                     listen: |__prism_source| Box::pin(async move {
                         let update: #update = (#source).await;
-                        ::prism::events::Change::new(move |component, ctx| {
-                            let component = component.downcast_mut::<#component>().unwrap();
-                            <#component as #path>::on_change(component, ctx, update);
-                        })
+                        Box::new(update) as Box<dyn ::std::any::Any>
                     }),
+                    call: |component, ctx, update| {
+                        let component = component.downcast_mut::<#component>().unwrap();
+                        let update = *update.downcast::<#update>().unwrap();
+                        <#component as #path>::on_change(component, ctx, update);
+                    },
                 }
             }
         }.into()

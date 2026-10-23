@@ -5,13 +5,12 @@ use std::borrow::Borrow;
 use std::path::PathBuf;
 use std::io::{Read, Seek, Write};
 use std::iter::FusedIterator;
-use std::ops::{Deref, RangeBounds};
+use std::ops::RangeBounds;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::events::ChangeSource;
-use crate::traits;
+use crate::{ContentBackend, traits};
 
 pub type PickResult<T> = Result<T, Cancelled>;
 
@@ -50,6 +49,17 @@ impl AsRef<Media> for Audio {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Tracks {Audio, Video, Both}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ImageFormat {Png, Jpeg, Webp, Gif, Bmp, Ico, Tiff, Qoi}
+impl ImageFormat {
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Png => "png", Self::Jpeg => "jpg", Self::Webp => "webp", Self::Gif => "gif",
+            Self::Bmp => "bmp", Self::Ico => "ico", Self::Tiff => "tiff", Self::Qoi => "qoi",
+        }
+    }
+}
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -133,22 +143,6 @@ pub struct Hardware(Box<dyn traits::DynHardware>);
 impl Hardware {
     pub fn new<H: traits::Hardware>(hardware: H) -> Self {Self(Box::new(hardware))}
     pub fn pick<T: Pickable>(&self) -> Picked<T> {T::pick(self)}
-    pub fn read_image<R: Read>(&self, mut reader: R) -> Result<Image, String> {
-        self.0.read_image(&mut reader).map(Image)
-    }
-    pub fn image_from_rgba(&self, rgba: impl Into<Arc<image::RgbaImage>>) -> Image {
-        Image(self.0.image_from_rgba(rgba.into()))
-    }
-    pub fn media(&self) -> Media {Media(self.0.media())}
-    pub fn media_from_sound(&self, sound: Sound) -> Result<Media, String> {
-        self.0.media_from_sound(sound).map(Media)
-    }
-    pub fn media_from_image(&self, image: Image, duration: Duration) -> Result<Media, String> {
-        self.0.media_from_image(image, duration).map(Media)
-    }
-    pub fn read_media<R: Read + Seek>(&self, mut reader: R) -> Result<Media, String> {
-        self.0.read_media(&mut reader).map(Media)
-    }
     pub fn open_keyboard(&self) -> Keyboard {self.0.open_keyboard()}
     pub fn start_camera(&self) -> Result<Camera, String> {self.0.start_camera()}
     pub fn start_microphone(&self) -> Result<Microphone, String> {self.0.start_microphone()}
@@ -240,31 +234,37 @@ pub struct Picked<T: Pickable> {
 impl<T: Pickable> Picked<T> {
     pub async fn get(&mut self) -> PickResult<T> {self.result.clone().await}
     pub fn try_get(&mut self) -> Option<PickResult<T>> {self.result.clone().now_or_never()}
+    /// Deliver this handle's result once; later waits stay pending.
+    pub async fn next(&mut self) -> PickResult<T> {
+        if self.delivered {return std::future::pending().await}
+        let item = self.get().await;
+        self.delivered = true;
+        item
+    }
 }
 impl<T: Pickable> Clone for Picked<T> {
     fn clone(&self) -> Self {Self {result: self.result.clone(), delivered: false}}
 }
-impl<T: Pickable> ChangeSource for Picked<T> {
-    type Update = PickResult<T>;
-    async fn next(&mut self) -> Option<Self::Update> {
-        if self.delivered {return None}
-        let item = self.get().await;
-        self.delivered = true;
-        Some(item)
-    }
-}
 
 #[derive(Clone, Debug)]
-pub struct Image(Box<dyn traits::Image>);
+pub struct Image(Box<dyn traits::DynImage>);
 impl Image {
-    pub fn new<I: traits::Image>(image: I) -> Self {Self(Box::new(image))}
+    pub fn read<R: Read>(mut reader: R) -> Result<Self, String> {
+        (ContentBackend::get().read_image)(&mut reader)
+    }
+    pub fn from_rgba(dimensions: (u32, u32), pixels: Vec<u8>) -> Self {
+        (ContentBackend::get().image_from_rgba)(dimensions, pixels)
+    }
     pub fn downcast_ref<I: traits::Image>(&self) -> Option<&I> {self.0.downcast_ref()}
     pub fn dimensions(&self) -> (u32, u32) {self.0.dimensions()}
+    /// Borrow decoded RGBA8 bytes with their actual dimensions, including corruption placeholders.
+    pub fn pixels(&self) -> ((u32, u32), &[u8]) {self.0.pixels()}
+    pub fn write<W: Write>(&self, mut writer: W, format: ImageFormat) -> Result<(), String> {
+        self.0.write(&mut writer, format)
+    }
 }
-
-impl Deref for Image {
-    type Target = Arc<image::RgbaImage>;
-    fn deref(&self) -> &Self::Target {self.0.as_ref().deref()}
+impl<I: traits::Image> From<I> for Image {
+    fn from(image: I) -> Self {Self(Box::new(image))}
 }
 impl PartialEq for Image {
     fn eq(&self, other: &Self) -> bool {self.0.as_ref().eq(other)}
@@ -272,9 +272,12 @@ impl PartialEq for Image {
 impl Eq for Image {}
 
 #[derive(Clone, Debug)]
-pub struct Media(Box<dyn traits::Media>);
+pub struct Media(Box<dyn traits::DynMedia>);
 impl Media {
-    pub fn new<M: traits::Media>(media: M) -> Self {Self(Box::new(media))}
+    pub fn new() -> Self {(ContentBackend::get().media)()}
+    pub fn read<R: Read + Seek>(mut reader: R) -> Result<Self, String> {
+        (ContentBackend::get().read_media)(&mut reader)
+    }
     pub fn downcast_ref<T: traits::Media>(&self) -> Option<&T> {self.0.downcast_ref()}
     pub fn copy<R: RangeBounds<Duration>>(&self, range: R, tracks: Tracks) -> Result<Self, String> {
         let range = (range.start_bound().cloned(), range.end_bound().cloned());
@@ -293,9 +296,32 @@ impl Media {
     pub fn dimensions(&self) -> Option<(u32, u32)> {self.0.dimensions()}
     pub fn thumbnail(&self) -> Option<Image> {self.0.thumbnail()}
 }
+impl<M: traits::Media> From<M> for Media {
+    fn from(media: M) -> Self {Self(Box::new(media))}
+}
+impl Default for Media {
+    fn default() -> Self {Self::new()}
+}
+impl TryFrom<Sound> for Media {
+    type Error = String;
+    fn try_from(sound: Sound) -> Result<Self, String> {(ContentBackend::get().media_from_sound)(sound)}
+}
+impl TryFrom<(Image, Duration)> for Media {
+    type Error = String;
+    fn try_from(image: (Image, Duration)) -> Result<Self, String> {
+        (ContentBackend::get().media_from_image)(image)
+    }
+}
 impl<T: Borrow<Media>> Extend<T> for Media {
     fn extend<I: IntoIterator<Item = T>>(&mut self, items: I) {
         for item in items {self.append(item.borrow());}
+    }
+}
+impl<T: Borrow<Media>> FromIterator<T> for Media {
+    fn from_iter<I: IntoIterator<Item = T>>(items: I) -> Self {
+        let mut media = Self::new();
+        media.extend(items);
+        media
     }
 }
 impl AsRef<Media> for Media {
@@ -353,8 +379,4 @@ impl Player {
     pub fn frame(&self) -> Frame {self.playback.frame()}
     /// Wait for the next queued update without loading or resetting the snapshot baseline.
     pub async fn next(&mut self) -> Frame {self.playback.next().await}
-}
-impl ChangeSource for Player {
-    type Update = Frame;
-    async fn next(&mut self) -> Option<Frame> {Some(Player::next(self).await)}
 }

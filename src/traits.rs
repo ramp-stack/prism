@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{Read, Seek, Write};
 use std::iter::FusedIterator;
-use std::ops::{Bound, Deref};
+use std::ops::Bound;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +16,7 @@ use std::time::Duration;
 use crate::air::{ContractType, Id, Request, Value};
 use crate::hardware::{
     Audio, Camera, Capture as CaptureData, Chunks as MediaChunks, Data, Format, Frame, Image as ImageData,
-    Media as MediaData, Microphone, PickResult, PlaybackMode, Sound, Tracks, Video, Visual,
+    ImageFormat, Media as MediaData, Microphone, PickResult, PlaybackMode, Sound, Tracks, Video, Visual,
 };
 use crate::service::{Key, Service, ServiceInit};
 
@@ -41,16 +41,6 @@ pub trait Hardware: Clone + 'static + Picker<Data> + Picker<ImageData> + Picker<
     + Picker<Visual> + Picker<Video> + Picker<Audio> + Picker<PathBuf>
     + Picker<Vec<Data>> + Picker<Vec<ImageData>> + Picker<Vec<MediaData>>
     + Picker<Vec<Visual>> + Picker<Vec<Video>> + Picker<Vec<Audio>> + Picker<Vec<PathBuf>> {
-    type Image: Image;
-    type Media: Media;
-
-    fn read_image(&self, reader: &mut dyn Read) -> Result<Self::Image, String>;
-    fn image_from_rgba(&self, rgba: Arc<image::RgbaImage>) -> Self::Image;
-
-    fn media(&self) -> Self::Media;
-    fn media_from_sound(&self, sound: Sound) -> Result<Self::Media, String>;
-    fn media_from_image(&self, image: ImageData, duration: Duration) -> Result<Self::Media, String>;
-    fn read_media(&self, reader: &mut dyn Reader) -> Result<Self::Media, String>;
     fn open_keyboard(&self) -> crate::hardware::Keyboard;
     fn start_camera(&self) -> Result<Camera, String>;
     fn start_microphone(&self) -> Result<Microphone, String>;
@@ -67,24 +57,21 @@ pub trait Picked<T: Clone + 'static>: 'static {
     fn get(&mut self) -> impl Future<Output = PickResult<T>>;
 }
 
-pub trait Keyboard: DynClone + 'static {}
-clone_trait_object!(Keyboard);
-
-pub trait Capture: DynClone + 'static {
-    fn error(&self) -> Option<String>;
-}
-clone_trait_object!(Capture);
-
-pub trait Image: downcast_rs::DowncastSync + DynClone + Debug + PartialEq<ImageData>
-    + Deref<Target = Arc<image::RgbaImage>> + Send + Sync + 'static {
+pub trait Image: Clone + Debug + PartialEq<ImageData> + Send + Sync + 'static {
+    fn read<R: Read>(reader: R) -> Result<Self, String>;
+    fn from_rgba(dimensions: (u32, u32), pixels: Vec<u8>) -> Self;
     fn dimensions(&self) -> (u32, u32);
+    /// Return actual dimensions and tightly packed RGBA8 bytes, stable across accesses and clones.
+    fn pixels(&self) -> ((u32, u32), &[u8]);
+    fn write<W: Write>(&self, writer: W, format: ImageFormat) -> Result<(), String>;
 }
-clone_trait_object!(Image);
-downcast_rs::impl_downcast!(sync Image);
 
-pub trait Media: downcast_rs::DowncastSync + DynClone + Debug + Send + Sync + 'static {
+pub trait Media: Clone + Debug + Send + Sync + 'static + TryFrom<Sound, Error = String>
+    + TryFrom<(ImageData, Duration), Error = String> {
+    fn new() -> Self;
+    fn read<R: Read + Seek>(reader: R) -> Result<Self, String>;
     fn player(&self) -> Result<Box<dyn Player>, String>;
-    fn copy(&self, range: (Bound<Duration>, Bound<Duration>), tracks: Tracks) -> Result<Box<dyn Media>, String>;
+    fn copy(&self, range: (Bound<Duration>, Bound<Duration>), tracks: Tracks) -> Result<Box<dyn DynMedia>, String>;
     fn replace(&self, range: (Bound<Duration>, Bound<Duration>), replacement: &MediaData, tracks: Tracks) -> Result<(), String>;
     fn write(&self, writer: &mut dyn Writer, format: Format) -> Result<(), String>;
     fn duration(&self) -> Duration;
@@ -93,8 +80,14 @@ pub trait Media: downcast_rs::DowncastSync + DynClone + Debug + Send + Sync + 's
     fn append(&self, other: &MediaData);
     fn chunks(&self, duration: Duration) -> Result<MediaChunks, String>;
 }
-clone_trait_object!(Media);
-downcast_rs::impl_downcast!(sync Media);
+
+pub trait Keyboard: DynClone + 'static {}
+clone_trait_object!(Keyboard);
+
+pub trait Capture: DynClone + 'static {
+    fn error(&self) -> Option<String>;
+}
+clone_trait_object!(Capture);
 
 pub trait Player: DynClone + Debug + Send + Sync + 'static {
     fn set_mode(&self, mode: PlaybackMode);
@@ -166,6 +159,52 @@ pub trait Resolver: Send + Sync {
     fn resolve(&self, name: Name, timestamp: Option<u64>) -> BoxFuture<'_, Arc<Identity>>;
 }
 
+pub trait DynImage: downcast_rs::DowncastSync + DynClone + Debug + PartialEq<ImageData> + Send + Sync {
+    fn dimensions(&self) -> (u32, u32);
+    fn pixels(&self) -> ((u32, u32), &[u8]);
+    fn write(&self, writer: &mut dyn Write, format: ImageFormat) -> Result<(), String>;
+}
+clone_trait_object!(DynImage);
+downcast_rs::impl_downcast!(sync DynImage);
+impl<I: Image> DynImage for I {
+    fn dimensions(&self) -> (u32, u32) {Image::dimensions(self)}
+    fn pixels(&self) -> ((u32, u32), &[u8]) {Image::pixels(self)}
+    fn write(&self, writer: &mut dyn Write, format: ImageFormat) -> Result<(), String> {
+        Image::write(self, writer, format)
+    }
+}
+
+pub trait DynMedia: downcast_rs::DowncastSync + DynClone + Debug + Send + Sync {
+    fn player(&self) -> Result<Box<dyn Player>, String>;
+    fn copy(&self, range: (Bound<Duration>, Bound<Duration>), tracks: Tracks) -> Result<Box<dyn DynMedia>, String>;
+    fn replace(&self, range: (Bound<Duration>, Bound<Duration>), replacement: &MediaData, tracks: Tracks) -> Result<(), String>;
+    fn write(&self, writer: &mut dyn Writer, format: Format) -> Result<(), String>;
+    fn duration(&self) -> Duration;
+    fn dimensions(&self) -> Option<(u32, u32)>;
+    fn thumbnail(&self) -> Option<ImageData>;
+    fn append(&self, other: &MediaData);
+    fn chunks(&self, duration: Duration) -> Result<MediaChunks, String>;
+}
+clone_trait_object!(DynMedia);
+downcast_rs::impl_downcast!(sync DynMedia);
+impl<M: Media> DynMedia for M {
+    fn player(&self) -> Result<Box<dyn Player>, String> {Media::player(self)}
+    fn copy(&self, range: (Bound<Duration>, Bound<Duration>), tracks: Tracks) -> Result<Box<dyn DynMedia>, String> {
+        Media::copy(self, range, tracks)
+    }
+    fn replace(&self, range: (Bound<Duration>, Bound<Duration>), replacement: &MediaData, tracks: Tracks) -> Result<(), String> {
+        Media::replace(self, range, replacement, tracks)
+    }
+    fn write(&self, writer: &mut dyn Writer, format: Format) -> Result<(), String> {
+        Media::write(self, writer, format)
+    }
+    fn duration(&self) -> Duration {Media::duration(self)}
+    fn dimensions(&self) -> Option<(u32, u32)> {Media::dimensions(self)}
+    fn thumbnail(&self) -> Option<ImageData> {Media::thumbnail(self)}
+    fn append(&self, other: &MediaData) {Media::append(self, other)}
+    fn chunks(&self, duration: Duration) -> Result<MediaChunks, String> {Media::chunks(self, duration)}
+}
+
 pub trait Reader: Read + Seek {}
 impl<R: Read + Seek> Reader for R {}
 
@@ -223,12 +262,6 @@ pub trait DynHardware: DynClone + DynPicker<Data> + DynPicker<ImageData> + DynPi
     + DynPicker<Visual> + DynPicker<Video> + DynPicker<Audio> + DynPicker<PathBuf>
     + DynPicker<Vec<Data>> + DynPicker<Vec<ImageData>> + DynPicker<Vec<MediaData>>
     + DynPicker<Vec<Visual>> + DynPicker<Vec<Video>> + DynPicker<Vec<Audio>> + DynPicker<Vec<PathBuf>> {
-    fn read_image(&self, reader: &mut dyn Read) -> Result<Box<dyn Image>, String>;
-    fn image_from_rgba(&self, rgba: Arc<image::RgbaImage>) -> Box<dyn Image>;
-    fn media(&self) -> Box<dyn Media>;
-    fn media_from_sound(&self, sound: Sound) -> Result<Box<dyn Media>, String>;
-    fn media_from_image(&self, image: ImageData, duration: Duration) -> Result<Box<dyn Media>, String>;
-    fn read_media(&self, reader: &mut dyn Reader) -> Result<Box<dyn Media>, String>;
     fn open_keyboard(&self) -> crate::hardware::Keyboard;
     fn start_camera(&self) -> Result<Camera, String>;
     fn start_microphone(&self) -> Result<Microphone, String>;
@@ -243,22 +276,6 @@ pub trait DynHardware: DynClone + DynPicker<Data> + DynPicker<ImageData> + DynPi
 clone_trait_object!(DynHardware);
 
 impl<H: Hardware> DynHardware for H {
-    fn read_image(&self, reader: &mut dyn Read) -> Result<Box<dyn Image>, String> {
-        Hardware::read_image(self, reader).map(|image| Box::new(image) as _)
-    }
-    fn image_from_rgba(&self, rgba: Arc<image::RgbaImage>) -> Box<dyn Image> {
-        Box::new(Hardware::image_from_rgba(self, rgba))
-    }
-    fn media(&self) -> Box<dyn Media> {Box::new(Hardware::media(self))}
-    fn media_from_sound(&self, sound: Sound) -> Result<Box<dyn Media>, String> {
-        Hardware::media_from_sound(self, sound).map(|media| Box::new(media) as _)
-    }
-    fn media_from_image(&self, image: ImageData, duration: Duration) -> Result<Box<dyn Media>, String> {
-        Hardware::media_from_image(self, image, duration).map(|media| Box::new(media) as _)
-    }
-    fn read_media(&self, reader: &mut dyn Reader) -> Result<Box<dyn Media>, String> {
-        Hardware::read_media(self, reader).map(|media| Box::new(media) as _)
-    }
     fn open_keyboard(&self) -> crate::hardware::Keyboard {Hardware::open_keyboard(self)}
     fn start_camera(&self) -> Result<Camera, String> {Hardware::start_camera(self)}
     fn start_microphone(&self) -> Result<Microphone, String> {Hardware::start_microphone(self)}

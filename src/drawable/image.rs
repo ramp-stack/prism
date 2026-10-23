@@ -1,9 +1,8 @@
-use image::RgbaImage;
-
 use std::collections::VecDeque;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 
+use crate::hardware::Image;
 use super::Size;
 
 #[derive(Clone, Debug)]
@@ -22,7 +21,7 @@ impl Svg {
         Ok(Self(Arc::new(SvgData {source, dimensions, pixels: Mutex::new(VecDeque::new())})))
     }
     pub fn dimensions(&self) -> Size {self.0.dimensions}
-    pub fn rasterize(&self, size: (u32, u32)) -> Arc<RgbaImage> {
+    pub fn rasterize(&self, size: (u32, u32)) -> Image {
         assert!(size.0 > 0 && size.1 > 0);
         let mut cache = self.0.pixels.lock().unwrap();
         if let Some(index) = cache.iter().position(|(cached, _)| *cached == size) {
@@ -36,12 +35,12 @@ impl Svg {
             .max(1.0 / dimensions.0).max(1.0 / dimensions.1);
         let svg = nsvg::parse_str(&self.0.source, nsvg::Units::Pixel, 96.0).unwrap();
         let (width, height, bytes) = svg.rasterize_to_raw_rgba(scale).unwrap();
-        let pixels = Arc::new(RgbaImage::from_raw(width, height, bytes).unwrap());
-        let bytes = pixels.as_raw().len();
+        let pixels = Image::from_rgba((width, height), bytes);
+        let bytes = pixels.pixels().1.len();
         if bytes <= 64 * 1024 * 1024 {
-            let mut retained = cache.iter().map(|(_, pixels)| pixels.as_raw().len()).sum::<usize>();
+            let mut retained = cache.iter().map(|(_, pixels)| pixels.pixels().1.len()).sum::<usize>();
             while cache.len() >= 4 || retained + bytes > 64 * 1024 * 1024 {
-                retained -= cache.pop_back().unwrap().1.as_raw().len();
+                retained -= cache.pop_back().unwrap().1.pixels().1.len();
             }
             cache.push_front((size, pixels.clone()));
         }
@@ -57,5 +56,5 @@ impl Eq for Svg {}
 struct SvgData {
     source: String,
     dimensions: Size,
-    pixels: Mutex<VecDeque<((u32, u32), Arc<RgbaImage>)>>,
+    pixels: Mutex<VecDeque<((u32, u32), Image)>>,
 }

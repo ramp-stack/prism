@@ -2,12 +2,16 @@ extern crate self as prism;
 
 use futures::FutureExt;
 
+use std::io::Read;
+use std::time::Duration;
+
 pub mod drawable;
 use drawable::{Area, Color, Drawable, Instruction, Item, LayoutTree, Size};
 use drawable::shape::{Shape, Variant};
 pub mod events;
 use events::{ChildEvent, DynEvent, Event, Events, WindowEvent};
 pub mod hardware;
+use hardware::{Image, Media, Sound};
 pub mod traits;
 pub mod air;
 pub mod service;
@@ -44,17 +48,14 @@ pub struct Context {
     /// Full-window fill drawn behind safe-area content. Transparent by default.
     pub background: Color,
     events: Events,
-    pointer_claimed: bool,
 }
 impl Context {
     pub fn new<H: traits::Hardware>(hardware: H, air: air::Air, window: Window) -> Self {
         Self {
             hardware: hardware::Hardware::new(hardware), air, window,
-            background: Color::transparent(), events: Events::new(), pointer_claimed: false,
+            background: Color::transparent(), events: Events::new(),
         }
     }
-    /// Reserve the current pointer gesture for this control instead of an ancestor's drag.
-    pub fn claim_pointer(&mut self) {self.pointer_claimed = true;}
 
     pub fn emit<E: Event>(&mut self, event: E) {self.events.push_back(Box::new(event));}
     pub fn events(&mut self) -> Events {std::mem::take(&mut self.events)}
@@ -65,6 +66,18 @@ pub struct Prism {
     context: Context,
 }
 impl Prism {
+    /// Register content constructors when implementing a Prism backend.
+    pub const fn content_backend<I: traits::Image, M: traits::Media>() -> impl inventory::Collect {
+        ContentBackend {
+            read_image: |reader| I::read(reader).map(Image::from),
+            image_from_rgba: |dimensions, pixels| Image::from(I::from_rgba(dimensions, pixels)),
+            media: || Media::from(M::new()),
+            read_media: |reader| M::read(reader).map(Media::from),
+            media_from_sound: |sound| M::try_from(sound).map(Media::from),
+            media_from_image: |image| M::try_from(image).map(Media::from),
+        }
+    }
+
     pub fn new<A: Application, H: traits::Hardware>(hardware: H, air: air::Air, window: Window) -> Self {
         let mut context = Context::new(hardware, air, window);
         let app = Box::new(A::new(&mut context));
@@ -76,8 +89,7 @@ impl Prism {
 
     pub async fn changed(&mut self) {
         if !self.context.events.is_empty() {return}
-        let change = self.app.as_mut().changed().await;
-        change.apply(&mut *self.app, &mut self.context);
+        self.app.changed(&mut self.context).await;
     }
 
     pub fn draw(&mut self) -> Vec<Instruction> {
@@ -120,5 +132,23 @@ impl Prism {
         }
         area.size = (area.size.0.min(layout.0.0), area.size.1.min(layout.0.1));
         (area, layout)
+    }
+}
+
+struct ContentBackend {
+    read_image: fn(&mut dyn Read) -> Result<Image, String>,
+    image_from_rgba: fn((u32, u32), Vec<u8>) -> Image,
+    media: fn() -> Media,
+    read_media: fn(&mut dyn traits::Reader) -> Result<Media, String>,
+    media_from_sound: fn(Sound) -> Result<Media, String>,
+    media_from_image: fn((Image, Duration)) -> Result<Media, String>,
+}
+inventory::collect!(ContentBackend);
+impl ContentBackend {
+    fn get() -> &'static Self {
+        let mut backends = inventory::iter::<Self>.into_iter();
+        let backend = backends.next().expect("No Prism content backend registered");
+        assert!(backends.next().is_none(), "Multiple Prism content backends registered");
+        backend
     }
 }

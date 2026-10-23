@@ -1,5 +1,6 @@
 use downcast_rs::{Downcast, impl_downcast};
 use dyn_clone::{DynClone, clone_trait_object};
+use futures::future::LocalBoxFuture;
 pub use prism_proc::Component;
 
 use std::any::Any;
@@ -7,7 +8,7 @@ use std::fmt::Debug;
 
 use crate::Context;
 use crate::events::{
-    ChildEvent, DynEvent, EventHandler, Change, ChangeFuture, MouseButton, MouseEvent, MouseState,
+    ChildEvent, DynEvent, EventHandler, ListenFuture, MouseButton, MouseEvent, MouseState,
 };
 use crate::hardware::{Image, Player};
 
@@ -76,24 +77,6 @@ pub struct RangeTree(pub SizeRange, pub Vec<RangeTree>);
 #[derive(Default, Debug, Clone)]
 pub struct LayoutTree(pub Size, pub Vec<(Offset, LayoutTree)>);
 
-impl LayoutTree {
-    pub fn caret(&self, children: Vec<&dyn Drawable>) -> Option<Caret> {
-        self.1.iter().zip(children).find_map(|((offset, layout), child)| {
-            let mut caret = child.caret(layout)?;
-            caret.rect.0 += offset.0;
-            caret.rect.1 += offset.1;
-            Some(caret)
-        })
-    }
-}
-
-/// The active editor's caret and line height, in the drawable's local coordinates.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Caret {
-    pub id: uuid::Uuid,
-    pub rect: Rect,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Area {
     pub offset: Offset,
@@ -104,12 +87,8 @@ pub trait Component: Clone + Debug + 'static {
     fn children_mut(&mut self) -> Vec<&mut dyn Drawable>;
     fn children(&self) -> Vec<&dyn Drawable>;
     fn layout(&self) -> &dyn Layout;
-    fn changed(&mut self) -> ChangeFuture<'_>;
-
-    fn caret(&self, layout: &LayoutTree) -> Option<Caret> {layout.caret(self.children())}
-    fn after_layout(&mut self, _layout: &mut LayoutTree) {}
-    /// Called after child dispatch; pointer claims include this component and its descendants.
-    fn after_event(&mut self, _ctx: &mut Context, _event: &dyn DynEvent, _pointer_claimed: bool) {}
+    fn listen(&mut self) -> ListenFuture<'_>;
+    fn update(&mut self, ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>);
 
     fn dispatch_event(&mut self, ctx: &mut Context, event: Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>> {
         EventHandler::dispatch(self, ctx, event)
@@ -136,16 +115,26 @@ pub trait Drawable: DynClone + Debug + Any + Downcast {
     }
     fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction>;
     fn event(&mut self, _ctx: &mut Context, _sized: &LayoutTree, _event: Box<dyn DynEvent>) {}
-    fn changed(&mut self) -> ChangeFuture<'_> {Box::pin(std::future::pending())}
-    fn caret(&self, _layout: &LayoutTree) -> Option<Caret> {None}
+
+    fn listen(&mut self) -> ListenFuture<'_> {Box::pin(std::future::pending())}
+    fn update(&mut self, _ctx: &mut Context, _path: Vec<usize>, _update: Box<dyn Any>) {
+        unreachable!("drawable has no change listener")
+    }
+    fn changed<'a>(&'a mut self, ctx: &'a mut Context) -> LocalBoxFuture<'a, ()> {
+        Box::pin(async move {
+            let (path, update) = self.listen().await;
+            self.update(ctx, path, update);
+        })
+    }
 }
 clone_trait_object!(Drawable);
 impl_downcast!(Drawable);
 
 impl<C: Component> Drawable for C {
-    fn caret(&self, layout: &LayoutTree) -> Option<Caret> {Component::caret(self, layout)}
-
-    fn changed(&mut self) -> ChangeFuture<'_> {Component::changed(self)}
+    fn listen(&mut self) -> ListenFuture<'_> {Component::listen(self)}
+    fn update(&mut self, ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>) {
+        Component::update(self, ctx, path, update);
+    }
 
     fn size_range(&self) -> RangeTree {
         let requests = self.children().into_iter().map(Drawable::size_range).collect::<Vec<_>>();
@@ -157,12 +146,10 @@ impl<C: Component> Drawable for C {
     fn layout(&mut self, size: Size, request: &RangeTree) -> LayoutTree {
         let size = request.0.clamp(size);
         let children = request.1.iter().map(|b| b.0).collect::<Vec<_>>();
-        let mut layout = LayoutTree(size, Component::layout(self).layout(size, children).into_iter()
+        LayoutTree(size, Component::layout(self).layout(size, children).into_iter()
             .zip(self.children_mut()).zip(request.1.iter())
             .map(|((Area {offset, size}, child), branch)| (offset, child.layout(size, branch)))
-            .collect());
-        self.after_layout(&mut layout);
-        layout
+            .collect())
     }
 
     fn draw(&self, sized: &LayoutTree, poffset: Offset, bound: Rect) -> Vec<Instruction> {
@@ -182,7 +169,6 @@ impl<C: Component> Drawable for C {
     }
 
     fn event(&mut self, ctx: &mut Context, sized: &LayoutTree, event: Box<dyn DynEvent>) {
-        let previous = std::mem::replace(&mut ctx.pointer_claimed, false);
         let areas: Vec<_> = sized.1.iter()
             .map(|(offset, branch)| Area {offset: *offset, size: branch.0}).collect();
         for event in Component::dispatch_event(self, ctx, event) {
@@ -194,18 +180,14 @@ impl<C: Component> Drawable for C {
                 events.into_iter().zip(self.children_mut()).zip(&sized.1) {
                 if let Some(event) = event {child.event(ctx, branch, event);}
             }
-            let pointer_claimed = ctx.pointer_claimed;
-            self.after_event(ctx, &*event, pointer_claimed);
         }
-        ctx.pointer_claimed |= previous;
     }
 }
 
 impl Drawable for Box<dyn Drawable> {
-    fn caret(&self, layout: &LayoutTree) -> Option<Caret> {Drawable::caret(&**self, layout)}
-
-    fn changed(&mut self) -> ChangeFuture<'_> {
-        Box::pin(async move {(**self).changed().await.map::<Self>(|boxed| &mut **boxed)})
+    fn listen(&mut self) -> ListenFuture<'_> {(**self).listen()}
+    fn update(&mut self, ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>) {
+        (**self).update(ctx, path, update);
     }
 
     fn name(&self) -> String {Drawable::name(&**self)}
@@ -262,11 +244,15 @@ impl Drawable for Svg {
 }
 
 impl Drawable for Player {
-    fn changed(&mut self) -> ChangeFuture<'_> {
+    fn listen(&mut self) -> ListenFuture<'_> {
         Box::pin(async move {
             self.next().await;
-            Change::new(|_, _| {})
+            (vec![], Box::new(()) as Box<dyn Any>)
         })
+    }
+
+    fn update(&mut self, _ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>) {
+        assert!(path.is_empty() && update.is::<()>());
     }
 
     fn size_range(&self) -> RangeTree {
@@ -280,10 +266,9 @@ impl Drawable for Player {
     fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
         self.frame().image.map_or_else(Vec::new, |image| image.draw(layout, offset, bound))
     }
-    fn event(&mut self, ctx: &mut Context, _layout: &LayoutTree, event: Box<dyn DynEvent>) {
+    fn event(&mut self, _ctx: &mut Context, _layout: &LayoutTree, event: Box<dyn DynEvent>) {
         if let Some(MouseEvent {position: Some(_), state: MouseState::Pressed(MouseButton::Left)}) =
             event.downcast_ref() {
-            ctx.claim_pointer();
             if self.is_playing() {self.stop();} else {self.start();}
         }
     }

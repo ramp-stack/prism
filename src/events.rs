@@ -1,5 +1,5 @@
 use downcast_rs::{Downcast, impl_downcast};
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use futures::future::LocalBoxFuture;
 use futures::stream::FuturesUnordered;
 use futures_timer::Delay;
@@ -10,19 +10,19 @@ use std::any::{Any, TypeId};
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use std::collections::{BTreeMap, VecDeque};
 
 use crate::{Context, Window};
-use crate::drawable::{Area, Component, Drawable};
+use crate::drawable::{Area, Component};
 
 pub type Events = std::collections::VecDeque<Box<dyn DynEvent>>;
-pub type ChangeFuture<'a> = LocalBoxFuture<'a, Change>;
+pub type ListenFuture<'a> = LocalBoxFuture<'a, (Vec<usize>, Box<dyn Any>)>;
 
 /// Registration emitted by `#[on_change]` in the component's crate.
 pub struct ChangeHandler {
     pub component: fn() -> TypeId,
     pub field: &'static str,
-    pub listen: for<'a> fn(&'a mut dyn Any) -> ChangeFuture<'a>,
+    pub listen: for<'a> fn(&'a mut dyn Any) -> LocalBoxFuture<'a, Box<dyn Any>>,
+    pub call: fn(&mut dyn Any, &mut Context, Box<dyn Any>),
 }
 impl ChangeHandler {
     pub fn find<C: Component>(field: &str) -> Option<&'static Self> {
@@ -31,6 +31,26 @@ impl ChangeHandler {
         let handler = handlers.next()?;
         assert!(handlers.next().is_none(), "a component field can have only one change listener");
         Some(handler)
+    }
+
+    pub async fn select(mut listeners: Vec<ListenFuture<'_>>) -> (Vec<usize>, Box<dyn Any>) {
+        match listeners.len() {
+            0 => return std::future::pending().await,
+            1 => {
+                let (mut path, update) = listeners.pop().unwrap().await;
+                path.push(0);
+                return (path, update)
+            },
+            _ => {},
+        }
+        let mut waits: Vec<_> = listeners.into_iter().enumerate().map(|(index, listen)| async move {
+            let (mut path, update) = listen.await;
+            path.push(index);
+            (path, update)
+        }).collect();
+        fastrand::shuffle(&mut waits);
+        let mut waits: FuturesUnordered<_> = waits.into_iter().collect();
+        waits.next().await.unwrap()
     }
 }
 inventory::collect!(ChangeHandler);
@@ -124,62 +144,6 @@ pub trait OnChange<U, Tag>: Component {
     fn on_change(&mut self, ctx: &mut Context, update: U);
 }
 
-pub trait ChangeSource: 'static {
-    type Update: 'static;
-    fn next(&mut self) -> impl Future<Output = Option<Self::Update>>;
-
-    fn changed(&mut self) -> impl Future<Output = Self::Update> {
-        async move {
-            match self.next().await {
-                Some(update) => update,
-                None => std::future::pending().await,
-            }
-        }
-    }
-}
-impl ChangeSource for Timer {
-    type Update = ();
-    async fn next(&mut self) -> Option<()> {
-        let Some((_, delay)) = &mut self.pending else {return std::future::pending().await};
-        delay.await;
-        self.pending = None;
-        Some(())
-    }
-}
-impl<S: ChangeSource> ChangeSource for Option<S> {
-    type Update = S::Update;
-    async fn next(&mut self) -> Option<Self::Update> {
-        match self {Some(source) => source.next().await, None => None}
-    }
-}
-impl<K: Clone + Ord + 'static, S: ChangeSource> ChangeSource for BTreeMap<K, S> {
-    type Update = Vec<(K, S::Update)>;
-    async fn next(&mut self) -> Option<Self::Update> {
-        let mut waits: FuturesUnordered<_> = self.iter_mut().map(|(key, source)| async move {
-            (key.clone(), source.next().await)
-        }).collect();
-        let mut updates = Vec::new();
-        while let Some((key, update)) = waits.next().await {
-            if let Some(update) = update {updates.push((key, update)); break}
-        }
-        while let Some(Some((key, update))) = waits.next().now_or_never() {
-            if let Some(update) = update {updates.push((key, update));}
-        }
-        updates.sort_by(|a, b| a.0.cmp(&b.0));
-        (!updates.is_empty()).then_some(updates)
-    }
-}
-impl<S: ChangeSource> ChangeSource for VecDeque<S> {
-    type Update = S::Update;
-    async fn next(&mut self) -> Option<Self::Update> {
-        while let Some(source) = self.front_mut() {
-            if let Some(update) = source.next().await {return Some(update)}
-            self.pop_front();
-        }
-        None
-    }
-}
-
 pub trait Event: Debug + Sized + 'static {
     fn pass(&self, ctx: &mut Context, children: &mut [ChildEvent<'_, Self>]);
 }
@@ -264,7 +228,7 @@ macro_rules! events {
     };
 }
 
-/// A cancelable one-shot change source, inactive by default.
+/// A cancelable one-shot timer, inactive by default.
 /// Consuming an update disarms the timer; only an explicit reset schedules another.
 /// Clones keep the deadline but can be awaited, reset, and canceled independently.
 #[derive(Debug, Default)]
@@ -282,6 +246,13 @@ impl Timer {
         self.pending = Some((Instant::now() + duration, Delay::new(duration)));
     }
 
+    /// Wait for the armed deadline; disarmed timers stay pending.
+    pub async fn next(&mut self) {
+        let Some((_, delay)) = &mut self.pending else {return std::future::pending().await};
+        delay.await;
+        self.pending = None;
+    }
+
     pub fn cancel(&mut self) {self.pending = None;}
     pub fn is_active(&self) -> bool {self.pending.is_some()}
 }
@@ -292,34 +263,5 @@ impl Clone for Timer {
                 (*at, Delay::new(at.saturating_duration_since(Instant::now())))
             }),
         }
-    }
-}
-
-pub struct Change(Box<dyn FnOnce(&mut dyn Drawable, &mut Context)>);
-impl Change {
-    pub fn new(apply: impl FnOnce(&mut dyn Drawable, &mut Context) + 'static) -> Self {
-        Self(Box::new(apply))
-    }
-    pub async fn select(mut changes: Vec<ChangeFuture<'_>>) -> Self {
-        match changes.len() {
-            0 => return std::future::pending().await,
-            1 => return changes.pop().unwrap().await,
-            _ => {},
-        }
-        fastrand::shuffle(&mut changes);
-        let mut waits: FuturesUnordered<_> = changes.into_iter().collect();
-        waits.next().await.unwrap()
-    }
-    pub fn apply(self, drawable: &mut dyn Drawable, ctx: &mut Context) {(self.0)(drawable, ctx)}
-    pub fn child<C: Component>(self, index: usize) -> Self {
-        Self::new(move |drawable, ctx| {
-            let children = &mut drawable.downcast_mut::<C>().unwrap().children_mut();
-            self.apply(children[index], ctx);
-        })
-    }
-    pub fn map<C: Drawable>(self, access: fn(&mut C) -> &mut dyn Drawable) -> Self {
-        Self::new(move |drawable, ctx| {
-            self.apply(access(drawable.downcast_mut::<C>().unwrap()), ctx);
-        })
     }
 }
