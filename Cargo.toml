@@ -1,25 +1,35 @@
 [package]
 name = "prism2"
-version = "0.1.6"
+version = "1.0.0"
 edition = "2024"
 license = "BSD-3-Clause"
 repository = "https://github.com/ramp-stack/prism.git"
 description = "A GUI abstraction library for building UI kits"
 documentation = "https://docs.rs/prism2"
 
+exclude = ["**/.DS_Store", ".idea/**"]
+
 [dependencies]
 anyanymap = "1.0.2"
 downcast-rs = "2.0.2"
 uuid = { version = "1.16.0", features = ["v4", "js"] }
-#wgpu_canvas = {version="5.0.8", default-features = false}
-wgpu_canvas = {path="../wgpu_canvas", default-features = false}
-prism_proc = "0.1.1" 
+prism_proc = {path = "prism_proc"}
 image = "0.24.9"
 include_dir = "0.7.4"
 nsvg = "0.5.1"
 dyn-clone = "1.0.20"
+inventory = "0.3"
+futures-timer = "3.0.4"
+futures = "0.3.34"
+fastrand = "2"
 
 
-maverick_os = { path = "../maverick_os" }
+fontdue = "0.9.4"
+swash = "0.2.10"
+unicode-segmentation = "1.13.3"
 
-#air = {path="../air"}
+air = "3.0.1"
+
+serde = {version = "1", features = ["derive"]}
+
+erased-serde = "0.4"

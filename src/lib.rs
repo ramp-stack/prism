@@ -1,146 +1,124 @@
-use std::fmt::Debug;
-use std::any::Any;
-
-pub use maverick_os::air::{self, Name, Id};
-pub use maverick_os::air::Contract;
-
-use event::{Event, TickEvent};
-use drawable::{Drawable, RequestTree, SizedTree};
-use canvas::Instruction;
-
-pub mod event;
-pub mod layout;
-pub mod drawable;
-pub mod display;
-pub mod emitters;
-
-pub use wgpu_canvas as canvas;
-
 extern crate self as prism;
 
-pub const IS_MOBILE: bool = cfg!(any(target_os = "ios", target_os = "android"));
-pub const IS_WEB: bool = cfg!(target_arch = "wasm32");
+use futures::FutureExt;
 
-///A handler trait for a Camera, It is assumed that CameraFrame events will be emmited for as long
-///as one of these Handlers exists.
-pub trait Camera: Any + Debug {fn clone_camera(&self) -> Box<dyn Camera>;}
-impl<C: Any + Debug + Clone> Camera for C {
-    fn clone_camera(&self) -> Box<dyn Camera> {Box::new(self.clone())}
+pub mod drawable;
+use drawable::{Area, Color, Drawable, Instruction, Item, LayoutTree, Size};
+use drawable::shape::{Shape, Variant};
+pub mod events;
+use events::{ChildEvent, DynEvent, Event, Events, WindowEvent};
+pub mod hardware;
+pub mod traits;
+pub mod air;
+pub mod service;
+pub use service::Service;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Window {
+    /// Available size reported by the platform, excluding the docked native keyboard.
+    pub size: Size,
+    pub insets: (f32, f32, f32, f32),
+    pub keyboard_visible: bool,
+    pub touch_controls: bool,
 }
-impl Clone for Box<dyn Camera> {fn clone(&self) -> Self {(**self).clone_camera()}}
-
-pub trait Handler {
-    fn air(&self) -> &maverick_os::air::Context;
-    fn start_camera(&self) -> Box<dyn Camera>;
-    fn pick_photo(&self);
-
-    fn get_safe_area(&self) -> (f32, f32, f32, f32);
-    fn share_social(&self, data: String);
-
-    fn set_clipboard(&self, data: String);
-    fn get_clipboard(&self) -> Option<String>;
-
-    fn trigger_haptic(&self);
+impl Window {
+    /// The safe area within the available window.
+    pub fn area(&self) -> Area {
+        let (top, left, bottom, right) = self.insets;
+        Area {
+            offset: (left, top),
+            size: ((self.size.0 - left - right).max(0.0), (self.size.1 - top - bottom).max(0.0)),
+        }
+    }
 }
 
-pub struct Context(&'static mut dyn Handler, Vec<Box<dyn Event>>);
+pub trait Application: 'static {
+    fn name() -> String;
+    fn new(ctx: &mut Context) -> impl Drawable;
+}
+
+pub struct Context {
+    pub hardware: hardware::Hardware,
+    pub air: air::Air,
+    pub window: Window,
+    /// Full-window fill drawn behind safe-area content. Transparent by default.
+    pub background: Color,
+    events: Events,
+    pointer_claimed: bool,
+}
 impl Context {
-    fn new(handler: &mut dyn Handler) -> Self {
-        unsafe { Context(
-            std::mem::transmute::<&mut dyn Handler, &'static mut dyn Handler>(handler),
-            Vec::new()
-        )}
+    pub fn new<H: traits::Hardware>(hardware: H, air: air::Air, window: Window) -> Self {
+        Self {
+            hardware: hardware::Hardware::new(hardware), air, window,
+            background: Color::transparent(), events: Events::new(), pointer_claimed: false,
+        }
     }
+    /// Reserve the current pointer gesture for this control instead of an ancestor's drag.
+    pub fn claim_pointer(&mut self) {self.pointer_claimed = true;}
 
-    pub fn me(&self) -> Name {self.0.air().me()}
-    pub fn list<C: Contract>(&self) -> std::collections::HashMap<Id, air::Instance<C>> {(*self.0.air().instances::<C>().list()).clone()}
-    pub fn create<C: Contract>(&self, init: C::Init) -> air::Instance<C> {self.0.air().instances::<C>().create(init)}
-    // pub fn instances<C: Contract>(&self) -> Vec<air::Instance<C>> {self.list::<C>().values().collect::<Vec<_>>()}
-
-    pub fn emit<E: Event>(&mut self, event: E) {self.1.push(Box::new(event))}
-
-    pub fn start_camera(&self) -> Box<dyn Camera> {self.0.start_camera()}
-    pub fn pick_photo(&self) {self.0.pick_photo()}
-
-    pub fn get_safe_area(&self) -> (f32, f32, f32, f32) {self.0.get_safe_area()}
-    pub fn share_social(&self, data: String) {self.0.share_social(data)}
-
-    pub fn set_clipboard(&self, data: String) {self.0.set_clipboard(data);}
-    pub fn get_clipboard(&self) -> Option<String> {self.0.get_clipboard()}
-
-    pub fn trigger_haptic(&self) {self.0.trigger_haptic()}
+    pub fn emit<E: Event>(&mut self, event: E) {self.events.push_back(Box::new(event));}
+    pub fn events(&mut self) -> Events {std::mem::take(&mut self.events)}
 }
 
-pub struct Instance {
+pub struct Prism {
     app: Box<dyn Drawable>,
-    screen: (f32, f32),
-    request: RequestTree,
-    size: SizedTree,
-    events: Vec<Box<dyn Event>>
+    context: Context,
 }
-
-impl Instance {
-    pub fn new<D: Drawable>(builder: impl FnOnce(&mut Context) -> D, handler: &mut dyn Handler, screen: (f32, f32)) -> Self {
-        let mut context = Context::new(handler);
-        let app = builder(&mut context);
-        let size_request = app.request_size();
-        let sized_app = app.build(screen, &size_request);
-
-        Instance {
-            app: Box::new(app),
-            screen,
-            request: size_request,
-            size: sized_app,
-            events: context.1
-        }
+impl Prism {
+    pub fn new<A: Application, H: traits::Hardware>(hardware: H, air: air::Air, window: Window) -> Self {
+        let mut context = Context::new(hardware, air, window);
+        let app = Box::new(A::new(&mut context));
+        Self {app, context}
     }
 
-    pub fn resize(&mut self, screen: (f32, f32)) {
-        self.screen = screen;
-        self.size = self.app.build(self.screen, &self.request);
+    pub fn on_event<E: Event>(&mut self, event: E) {self.context.emit(event);}
+    pub fn resize(&mut self, window: Window) {self.on_event(WindowEvent::Resized(window));}
+
+    pub async fn changed(&mut self) {
+        if !self.context.events.is_empty() {return}
+        let change = self.app.as_mut().changed().await;
+        change.apply(&mut *self.app, &mut self.context);
     }
 
-    pub fn emit<E: Event>(&mut self, event: E) {self.events.push(Box::new(event));}
-
-    pub fn draw(&mut self, handler: &mut dyn Handler) -> Vec<Instruction> {
-        let mut context = Context::new(handler);
-        self.app.event(&mut context, &self.size, Box::new(TickEvent));
-        let mut events = self.events.drain(..).rev().collect::<Vec<_>>();
-        events.extend(context.1);
-        let mut context = Context::new(handler);
-        for event in events {
-            if let Some(event) = event
-                .pass(&mut context, &[prism::layout::Area{offset: (0.0, 0.0), size: self.size.0}])
-                .remove(0)
-            {
-                self.app.event(&mut context, &self.size, event);
+    pub fn draw(&mut self) -> Vec<Instruction> {
+        for _ in 0..64 {
+            while let Some(event) = self.context.events.pop_front() {
+                if let Some(WindowEvent::Resized(window)) = event.downcast_ref::<WindowEvent>() {
+                    self.context.window = *window;
+                }
+                let (area, layout) = self.layout();
+                let mut passed: Option<Box<dyn DynEvent>> = None;
+                event.pass_dyn(&mut self.context, &mut [ChildEvent {area: &area, event: &mut passed}]);
+                if let Some(event) = passed {self.app.event(&mut self.context, &layout, event);}
             }
+            if self.changed().now_or_never().is_none() {break}
         }
-        self.events = context.1;
-        self.request = self.app.request_size();
-        self.size = self.app.build(self.screen, &self.request);
-        self.app.draw(&self.size, (0.0, 0.0), (0.0, 0.0, self.screen.0, self.screen.1))
-    }
-}
-
-
-type OnTick<C> = Box<dyn FnMut(&mut Context, &C)>;
-pub struct ContractListener<C: Contract> {
-    contract: C,
-    on_tick: OnTick<C>,
-    update: Box<dyn FnMut() -> C>,
-}
-
-impl<C: Contract> ContractListener<C> {
-    pub fn new(contract: C, on_tick: impl FnMut(&mut Context, &C) + 'static, update: impl FnMut() -> C + 'static) -> Self {
-        ContractListener {contract, on_tick: Box::new(on_tick), update: Box::new(update)}
+        let (area, layout) = self.layout();
+        let bound = (area.offset.0, area.offset.1, area.size.0, area.size.1);
+        let mut instructions = Vec::new();
+        if self.context.background.3 > 0 {
+            let (width, height) = self.context.window.size;
+            let shape = Shape::new(width, height, self.context.background, Variant::Rectangle);
+            instructions.push(Instruction {
+                offset: (0.0, 0.0), bound: (0.0, 0.0, width, height), item: Item::Shape(shape),
+            });
+        }
+        instructions.extend(self.app.draw(&layout, area.offset, bound));
+        instructions
     }
 
-    pub fn update(&mut self) {
-        self.contract = (self.update)();
-    }
-
-    pub fn tick(&mut self, ctx: &mut Context) {
-        (self.on_tick)(ctx, &self.contract)
+    fn layout(&mut self) -> (Area, LayoutTree) {
+        let mut area = self.context.window.area();
+        let mut range = self.app.size_range();
+        let mut layout = self.app.layout(area.size, &range);
+        // Settle text wrapping before dispatching input or drawing.
+        for _ in 0..4 {
+            let next = self.app.size_range();
+            if next == range {break}
+            range = next;
+            layout = self.app.layout(area.size, &range);
+        }
+        area.size = (area.size.0.min(layout.0.0), area.size.1.min(layout.0.1));
+        (area, layout)
     }
 }
