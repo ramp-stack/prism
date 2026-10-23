@@ -1371,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "prism2"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "air",
  "anyanymap",
@@ -1395,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "prism_proc"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "proc-macro2 1.0.107",
  "quote 1.0.47",
