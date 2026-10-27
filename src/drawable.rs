@@ -169,7 +169,7 @@ impl Drawable for Text {
     fn request_width(&mut self) -> (f32, f32) {
         if !self.fit {return (0.0, f32::INFINITY)}
         let width = self.inner.width.take();
-        let natural = self.inner.size().0;
+        let natural = self.inner.size().0.ceil();
         self.inner.width = width;
         (0.0, natural)
     }
