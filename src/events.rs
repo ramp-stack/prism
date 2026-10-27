@@ -12,63 +12,11 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::{Context, Window};
-use crate::drawable::{Area, Component};
+use crate::drawable::{Area, Component, Drawable};
 
 pub type Events = std::collections::VecDeque<Box<dyn DynEvent>>;
-pub type ListenFuture<'a> = LocalBoxFuture<'a, (Vec<usize>, Box<dyn Any>)>;
-
-/// Registration emitted by `#[on_change]` in the component's crate.
-pub struct ChangeHandler {
-    pub component: fn() -> TypeId,
-    pub field: &'static str,
-    pub listen: for<'a> fn(&'a mut dyn Any) -> LocalBoxFuture<'a, Box<dyn Any>>,
-    pub call: fn(&mut dyn Any, &mut Context, Box<dyn Any>),
-}
-impl ChangeHandler {
-    pub fn find<C: Component>(field: &str) -> Option<&'static Self> {
-        let mut handlers = inventory::iter::<Self>.into_iter()
-            .filter(|handler| (handler.component)() == TypeId::of::<C>() && handler.field == field);
-        let handler = handlers.next()?;
-        assert!(handlers.next().is_none(), "a component field can have only one change listener");
-        Some(handler)
-    }
-
-    pub async fn select(mut listeners: Vec<ListenFuture<'_>>) -> (Vec<usize>, Box<dyn Any>) {
-        match listeners.len() {
-            0 => return std::future::pending().await,
-            1 => {
-                let (mut path, update) = listeners.pop().unwrap().await;
-                path.push(0);
-                return (path, update)
-            },
-            _ => {},
-        }
-        let mut waits: Vec<_> = listeners.into_iter().enumerate().map(|(index, listen)| async move {
-            let (mut path, update) = listen.await;
-            path.push(index);
-            (path, update)
-        }).collect();
-        fastrand::shuffle(&mut waits);
-        let mut waits: FuturesUnordered<_> = waits.into_iter().collect();
-        waits.next().await.unwrap()
-    }
-}
-inventory::collect!(ChangeHandler);
-
-pub struct EventHandler {
-    pub types: fn() -> (TypeId, TypeId),
-    pub call: fn(&mut dyn Any, &mut Context, Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>>,
-}
-impl EventHandler {
-    pub fn dispatch<C: Component>(component: &mut C, ctx: &mut Context, event: Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>> {
-        let types = (TypeId::of::<C>(), (*event).type_id());
-        match inventory::iter::<Self>.into_iter().find(|handler| (handler.types)() == types) {
-            Some(handler) => (handler.call)(component, ctx, event),
-            None => vec![event],
-        }
-    }
-}
-inventory::collect!(EventHandler);
+pub type ListenCallback<T = dyn Any> = Box<dyn FnOnce(&mut T, &mut Context)>;
+pub type ListenFuture<'a, T = dyn Any> = LocalBoxFuture<'a, ListenCallback<T>>;
 
 pub struct ChildEvent<'a, E> {
     pub area: &'a Area,
@@ -131,16 +79,27 @@ pub struct CursorEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MediaEvent {Play, Pause, VolumeUp, VolumeDown}
+pub enum MediaEvent {Play, Pause, Toggle, VolumeUp, VolumeDown}
 
-#[diagnostic::on_unimplemented(message = "add #[on_event] to this OnEvent implementation")]
+/// Implemented by `#[on_event]` expansions in the component's crate.
+#[diagnostic::on_unimplemented(
+    message = "add #[on_event] to this OnEvent implementation",
+    label = "add #[on_event] to this implementation"
+)]
 pub trait EventRegistration<E: Event> {}
 
-pub trait OnEvent<E: Event>: Component + EventRegistration<E> {
+/// Compile-time attribute guard implemented by `#[on_change]` in the component's crate.
+#[diagnostic::on_unimplemented(
+    message = "add #[on_change(source)] to this OnChange implementation",
+    label = "add #[on_change(source)] to this implementation"
+)]
+pub trait ChangeRegistration<U, Tag> {}
+
+pub trait OnEvent<E: Event>: Drawable + EventRegistration<E> {
     fn on(&mut self, ctx: &mut Context, event: E) -> Vec<Box<dyn DynEvent>>;
 }
 
-pub trait OnChange<U, Tag>: Component {
+pub trait OnChange<U, Tag = ()>: Component + ChangeRegistration<U, Tag> {
     fn on_change(&mut self, ctx: &mut Context, update: U);
 }
 
@@ -226,6 +185,35 @@ macro_rules! events {
     ( $( $x:expr ),* $(,)? ) => {
         vec![ $(Box::new($x) as Box<dyn $crate::events::DynEvent>),* ]
     };
+}
+
+pub struct EventHandler {
+    pub types: fn() -> (TypeId, TypeId),
+    pub call: fn(&mut dyn Any, &mut Context, Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>>,
+}
+impl EventHandler {
+    pub fn dispatch(target: &mut dyn Any, ctx: &mut Context, event: Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>> {
+        let types = ((*target).type_id(), (*event).type_id());
+        match inventory::iter::<Self>.into_iter().find(|handler| (handler.types)() == types) {
+            Some(handler) => (handler.call)(target, ctx, event),
+            None => vec![event],
+        }
+    }
+}
+inventory::collect!(EventHandler);
+
+pub struct ChangeHandler;
+impl ChangeHandler {
+    pub async fn select<T: ?Sized>(mut listeners: Vec<ListenFuture<'_, T>>) -> ListenCallback<T> {
+        match listeners.len() {
+            0 => return std::future::pending().await,
+            1 => return listeners.pop().unwrap().await,
+            _ => {},
+        }
+        fastrand::shuffle(&mut listeners);
+        let mut waits: FuturesUnordered<_> = listeners.into_iter().collect();
+        waits.next().await.unwrap()
+    }
 }
 
 /// A cancelable one-shot timer, inactive by default.

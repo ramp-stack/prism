@@ -1,78 +1,20 @@
 use downcast_rs::{Downcast, impl_downcast};
 use dyn_clone::{DynClone, clone_trait_object};
-use futures::future::LocalBoxFuture;
 pub use prism_proc::Component;
+pub use wgpu_prism::drawable::{Color, Icon, Instruction, Item, Offset, Rect, Size, Svg, shape, text};
+use wgpu_prism::drawable::shape::Variant;
 
 use std::any::Any;
 use std::fmt::Debug;
+use std::hash::{BuildHasher, Hash};
+use std::ops::{Deref, DerefMut};
 
 use crate::Context;
 use crate::events::{
-    ChildEvent, DynEvent, EventHandler, ListenFuture, MouseButton, MouseEvent, MouseState,
+    ChangeHandler, ChildEvent, DynEvent, EventHandler, ListenCallback, ListenFuture,
+    MouseButton, MouseEvent, MouseState,
 };
 use crate::hardware::{Image, Player};
-
-pub mod shape;
-use shape::{Shape, Variant};
-pub mod text;
-mod image;
-pub use image::Svg;
-
-pub type Offset = (f32, f32);
-pub type Rect = (f32, f32, f32, f32);
-pub type Size = (f32, f32);
-
-pub enum Item {
-    Shape(Shape),
-    Text(text::Text),
-    Image(Shape, Image, Option<Color>),
-    Svg(Shape, Svg, Option<Color>),
-}
-
-pub struct Instruction {
-    pub bound: Rect,
-    pub offset: Offset,
-    pub item: Item,
-}
-
-/// Unpremultiplied sRGB bytes with a linear alpha byte (0 transparent, 255 opaque).
-#[derive(Default, Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Color(pub u8, pub u8, pub u8, pub u8);
-impl Color {
-    pub fn white() -> Self {Color(255, 255, 255, 255)}
-    pub fn black() -> Self {Color(0, 0, 0, 255)}
-    pub fn transparent() -> Self {Color(0, 0, 0, 0)}
-    pub fn red() -> Self {Color(255, 0, 0, 255)}
-    pub fn green() -> Self {Color(0, 255, 0, 255)}
-    pub fn blue() -> Self {Color(0, 0, 255, 255)}
-    pub fn yellow() -> Self {Color(255, 255, 0, 255)}
-    pub fn magenta() -> Self {Color(255, 0, 255, 255)}
-    pub fn cyan() -> Self {Color(0, 255, 255, 255)}
-}
-
-#[derive(Debug, Clone)]
-pub struct Icon(pub Svg, pub Color);
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, PartialOrd)]
-pub struct SizeRange {
-    pub min_width: f32,
-    pub max_width: f32,
-    pub min_height: f32,
-    pub max_height: f32,
-}
-impl SizeRange {
-    pub fn fixed(size: (f32, f32)) -> Self {Self {
-        min_width: size.0, max_width: size.0,
-        min_height: size.1, max_height: size.1,
-    }}
-    pub fn clamp(&self, size: (f32, f32)) -> (f32, f32) {(
-        size.0.clamp(self.min_width, self.max_width),
-        size.1.clamp(self.min_height, self.max_height),
-    )}
-}
-
-#[derive(Default, Debug, Clone, PartialEq)]
-pub struct RangeTree(pub SizeRange, pub Vec<RangeTree>);
 
 #[derive(Default, Debug, Clone)]
 pub struct LayoutTree(pub Size, pub Vec<(Offset, LayoutTree)>);
@@ -83,73 +25,53 @@ pub struct Area {
     pub size: Size,
 }
 
+pub trait Layout: std::fmt::Debug + DynClone {
+    fn request_width(&mut self, children: Vec<(f32, f32)>) -> (f32, f32);
+    fn assign_width(&mut self, width: f32) -> Vec<f32>;
+    fn request_height(&mut self, width: f32, children: Vec<(f32, f32)>) -> (f32, f32);
+    fn layout(&mut self, size: Size) -> Vec<Area>;
+}
+
+impl Layout for Box<dyn Layout> {
+    fn request_width(&mut self, children: Vec<(f32, f32)>) -> (f32, f32) {
+        (**self).request_width(children)
+    }
+    fn assign_width(&mut self, width: f32) -> Vec<f32> {(**self).assign_width(width)}
+    fn request_height(&mut self, width: f32, children: Vec<(f32, f32)>) -> (f32, f32) {
+        (**self).request_height(width, children)
+    }
+    fn layout(&mut self, size: Size) -> Vec<Area> {(**self).layout(size)}
+}
+clone_trait_object!(Layout);
+
 pub trait Component: Clone + Debug + 'static {
     fn children_mut(&mut self) -> Vec<&mut dyn Drawable>;
     fn children(&self) -> Vec<&dyn Drawable>;
-    fn layout(&self) -> &dyn Layout;
-    fn listen(&mut self) -> ListenFuture<'_>;
-    fn update(&mut self, ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>);
+    fn layout(&mut self) -> &mut dyn Layout;
+    fn listen(&mut self) -> ListenFuture<'_, Self>;
 
     fn dispatch_event(&mut self, ctx: &mut Context, event: Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>> {
         EventHandler::dispatch(self, ctx, event)
     }
 }
 
-pub trait Layout: std::fmt::Debug + DynClone {
-    fn size_range(&self, children: Vec<SizeRange>) -> SizeRange;
-    fn layout(&self, size: Size, children: Vec<SizeRange>) -> Vec<Area>;
-}
-
-impl Layout for Box<dyn Layout> {
-    fn size_range(&self, children: Vec<SizeRange>) -> SizeRange {(**self).size_range(children)}
-    fn layout(&self, size: Size, children: Vec<SizeRange>) -> Vec<Area> {(**self).layout(size, children)}
-}
-clone_trait_object!(Layout);
-
-#[allow(private_bounds)]
-pub trait Drawable: DynClone + Debug + Any + Downcast {
-    fn name(&self) -> String {std::any::type_name_of_val(self).to_string()}
-    fn size_range(&self) -> RangeTree;
-    fn layout(&mut self, size: Size, range_tree: &RangeTree) -> LayoutTree {
-        LayoutTree(range_tree.0.clamp(size), vec![])
-    }
-    fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction>;
-    fn event(&mut self, _ctx: &mut Context, _sized: &LayoutTree, _event: Box<dyn DynEvent>) {}
-
-    fn listen(&mut self) -> ListenFuture<'_> {Box::pin(std::future::pending())}
-    fn update(&mut self, _ctx: &mut Context, _path: Vec<usize>, _update: Box<dyn Any>) {
-        unreachable!("drawable has no change listener")
-    }
-    fn changed<'a>(&'a mut self, ctx: &'a mut Context) -> LocalBoxFuture<'a, ()> {
-        Box::pin(async move {
-            let (path, update) = self.listen().await;
-            self.update(ctx, path, update);
-        })
-    }
-}
-clone_trait_object!(Drawable);
-impl_downcast!(Drawable);
-
 impl<C: Component> Drawable for C {
-    fn listen(&mut self) -> ListenFuture<'_> {Component::listen(self)}
-    fn update(&mut self, ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>) {
-        Component::update(self, ctx, path, update);
+    fn request_width(&mut self) -> (f32, f32) {
+        let requests = self.children_mut().into_iter().map(Drawable::request_width).collect();
+        Component::layout(self).request_width(requests)
     }
 
-    fn size_range(&self) -> RangeTree {
-        let requests = self.children().into_iter().map(Drawable::size_range).collect::<Vec<_>>();
-        let info = requests.iter().map(|i| i.0).collect::<Vec<_>>();
-        let r = Component::layout(self).size_range(info);
-        RangeTree(r, requests)
+    fn request_height(&mut self, width: f32) -> (f32, f32) {
+        let widths = Component::layout(self).assign_width(width);
+        let requests = self.children_mut().into_iter().zip(widths)
+            .map(|(child, width)| child.request_height(width)).collect();
+        Component::layout(self).request_height(width, requests)
     }
 
-    fn layout(&mut self, size: Size, request: &RangeTree) -> LayoutTree {
-        let size = request.0.clamp(size);
-        let children = request.1.iter().map(|b| b.0).collect::<Vec<_>>();
-        LayoutTree(size, Component::layout(self).layout(size, children).into_iter()
-            .zip(self.children_mut()).zip(request.1.iter())
-            .map(|((Area {offset, size}, child), branch)| (offset, child.layout(size, branch)))
-            .collect())
+    fn layout(&mut self, size: Size) -> LayoutTree {
+        let areas = Component::layout(self).layout(size);
+        LayoutTree(size, areas.into_iter().zip(self.children_mut())
+            .map(|(Area {offset, size}, child)| (offset, child.layout(size))).collect())
     }
 
     fn draw(&self, sized: &LayoutTree, poffset: Offset, bound: Rect) -> Vec<Instruction> {
@@ -182,89 +104,118 @@ impl<C: Component> Drawable for C {
             }
         }
     }
+
+    fn changed(&mut self) -> ListenFuture<'_> {
+        Box::pin(async move {
+            let callback = Component::listen(self).await;
+            Box::new(move |target: &mut dyn Any, ctx: &mut Context| {
+                callback(target.downcast_mut::<Self>().unwrap(), ctx);
+            }) as ListenCallback
+        })
+    }
 }
 
-impl Drawable for Box<dyn Drawable> {
-    fn listen(&mut self) -> ListenFuture<'_> {(**self).listen()}
-    fn update(&mut self, ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>) {
-        (**self).update(ctx, path, update);
-    }
+#[allow(private_bounds)]
+pub trait Drawable: DynClone + Debug + Any + Downcast {
+    fn name(&self) -> String {std::any::type_name_of_val(self).to_string()}
+    fn request_width(&mut self) -> (f32, f32);
+    fn request_height(&mut self, width: f32) -> (f32, f32);
+    fn layout(&mut self, size: Size) -> LayoutTree {LayoutTree(size, vec![])}
+    fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction>;
+    fn event(&mut self, _ctx: &mut Context, _sized: &LayoutTree, _event: Box<dyn DynEvent>) {}
 
+    fn changed(&mut self) -> ListenFuture<'_> {Box::pin(std::future::pending())}
+}
+clone_trait_object!(Drawable);
+impl_downcast!(Drawable);
+
+impl Drawable for Box<dyn Drawable> {
     fn name(&self) -> String {Drawable::name(&**self)}
-    fn size_range(&self) -> RangeTree {Drawable::size_range(&**self)}
-    fn layout(&mut self, size: Size, request: &RangeTree) -> LayoutTree {
-        Drawable::layout(&mut **self, size, request)
+    fn request_width(&mut self) -> (f32, f32) {Drawable::request_width(&mut **self)}
+    fn request_height(&mut self, width: f32) -> (f32, f32) {
+        Drawable::request_height(&mut **self, width)
     }
+    fn layout(&mut self, size: Size) -> LayoutTree {Drawable::layout(&mut **self, size)}
     fn draw(&self, sized: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
         Drawable::draw(&**self, sized, offset, bound)
     }
     fn event(&mut self, ctx: &mut Context, sized: &LayoutTree, event: Box<dyn DynEvent>) {
         Drawable::event(&mut **self, ctx, sized, event)
     }
-}
 
-impl Drawable for Shape {
-    fn size_range(&self) -> RangeTree {RangeTree(SizeRange::fixed(self.size()), vec![])}
-    fn draw(&self, _layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
-        vec![Instruction {offset, bound, item: Item::Shape(*self)}]
+    fn changed(&mut self) -> ListenFuture<'_> {
+        Box::pin(async move {
+            let callback = (**self).changed().await;
+            Box::new(move |target: &mut dyn Any, ctx: &mut Context| {
+                callback(target.downcast_mut::<Self>().unwrap().as_mut().as_any_mut(), ctx);
+            }) as ListenCallback
+        })
     }
 }
 
-impl Drawable for text::Text {
-    fn size_range(&self) -> RangeTree {RangeTree(SizeRange::fixed(self.size()), vec![])}
+impl Drawable for Shape {
+    fn request_width(&mut self) -> (f32, f32) {(0.0, f32::INFINITY)}
+    fn request_height(&mut self, _width: f32) -> (f32, f32) {(0.0, f32::INFINITY)}
+    fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
+        let shape = shape::Shape {
+            width: layout.0.0, height: layout.0.1, stroke: self.stroke,
+            angle: self.angle, color: self.color, variant: self.variant,
+        };
+        vec![Instruction {offset, bound, item: Item::Shape(shape)}]
+    }
+}
+
+impl Drawable for Text {
+    fn request_width(&mut self) -> (f32, f32) {
+        if !self.fit {return (0.0, f32::INFINITY)}
+        let width = self.inner.width.take();
+        let natural = self.inner.size().0;
+        self.inner.width = width;
+        (0.0, natural)
+    }
+
+    fn request_height(&mut self, width: f32) -> (f32, f32) {
+        self.inner.width = Some(width);
+        let height = self.inner.size().1;
+        (height, height)
+    }
+
     fn draw(&self, _layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
-        vec![Instruction {offset, bound, item: Item::Text(self.clone())}]
+        vec![Instruction {offset, bound, item: Item::Text(self.inner.clone())}]
+    }
+
+    fn event(&mut self, ctx: &mut Context, _sized: &LayoutTree, event: Box<dyn DynEvent>) {
+        EventHandler::dispatch(self, ctx, event);
     }
 }
 
 impl Drawable for Image {
-    fn size_range(&self) -> RangeTree {
-        RangeTree(SizeRange {
-            min_width: 0.0, max_width: f32::INFINITY,
-            min_height: 0.0, max_height: f32::INFINITY,
-        }, vec![])
-    }
+    fn request_width(&mut self) -> (f32, f32) {(0.0, f32::INFINITY)}
+    fn request_height(&mut self, _width: f32) -> (f32, f32) {(0.0, f32::INFINITY)}
     fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
-        let shape = Shape::new(layout.0.0, layout.0.1, Color::white(), Variant::Rectangle);
+        let shape = shape::Shape::new(layout.0.0, layout.0.1, Color::white(), Variant::Rectangle);
         vec![Instruction {offset, bound, item: Item::Image(shape, self.clone(), None)}]
     }
 }
 
 impl Drawable for Svg {
-    fn size_range(&self) -> RangeTree {
-        RangeTree(SizeRange {
-            min_width: 0.0, max_width: f32::INFINITY,
-            min_height: 0.0, max_height: f32::INFINITY,
-        }, vec![])
-    }
+    fn request_width(&mut self) -> (f32, f32) {(0.0, f32::INFINITY)}
+    fn request_height(&mut self, _width: f32) -> (f32, f32) {(0.0, f32::INFINITY)}
     fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
-        let shape = Shape::new(layout.0.0, layout.0.1, Color::white(), Variant::Rectangle);
+        let shape = shape::Shape::new(layout.0.0, layout.0.1, Color::white(), Variant::Rectangle);
         vec![Instruction {offset, bound, item: Item::Svg(shape, self.clone(), None)}]
     }
 }
 
 impl Drawable for Player {
-    fn listen(&mut self) -> ListenFuture<'_> {
-        Box::pin(async move {
-            self.next().await;
-            (vec![], Box::new(()) as Box<dyn Any>)
-        })
+    fn request_width(&mut self) -> (f32, f32) {
+        if self.has_video() {(0.0, f32::INFINITY)} else {(0.0, 0.0)}
     }
-
-    fn update(&mut self, _ctx: &mut Context, path: Vec<usize>, update: Box<dyn Any>) {
-        assert!(path.is_empty() && update.is::<()>());
-    }
-
-    fn size_range(&self) -> RangeTree {
-        if self.source().dimensions().is_some() {
-            RangeTree(SizeRange {
-                min_width: 0.0, max_width: f32::INFINITY,
-                min_height: 0.0, max_height: f32::INFINITY,
-            }, vec![])
-        } else {RangeTree(SizeRange::fixed((0.0, 0.0)), vec![])}
+    fn request_height(&mut self, _width: f32) -> (f32, f32) {
+        if self.has_video() {(0.0, f32::INFINITY)} else {(0.0, 0.0)}
     }
     fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
-        self.frame().image.map_or_else(Vec::new, |image| image.draw(layout, offset, bound))
+        self.frame().video.map_or_else(Vec::new, |frame| frame.image.draw(layout, offset, bound))
     }
     fn event(&mut self, _ctx: &mut Context, _layout: &LayoutTree, event: Box<dyn DynEvent>) {
         if let Some(MouseEvent {position: Some(_), state: MouseState::Pressed(MouseButton::Left)}) =
@@ -272,30 +223,55 @@ impl Drawable for Player {
             if self.is_playing() {self.stop();} else {self.start();}
         }
     }
-}
 
-impl Drawable for Icon {
-    fn size_range(&self) -> RangeTree {self.0.size_range()}
-    fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
-        let shape = Shape::new(layout.0.0, layout.0.1, Color::white(), Variant::Rectangle);
-        vec![Instruction {offset, bound, item: Item::Svg(shape, self.0.clone(), Some(self.1))}]
+    fn changed(&mut self) -> ListenFuture<'_> {
+        Box::pin(async move {
+            self.next().await;
+            Box::new(|_: &mut dyn Any, _: &mut Context| {}) as ListenCallback
+        })
     }
 }
 
-pub trait Drawables {
-    fn drawables(&self) -> Vec<&dyn Drawable>;
-    fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable>;
+impl Drawable for Icon {
+    fn request_width(&mut self) -> (f32, f32) {self.0.request_width()}
+    fn request_height(&mut self, width: f32) -> (f32, f32) {self.0.request_height(width)}
+    fn draw(&self, layout: &LayoutTree, offset: Offset, bound: Rect) -> Vec<Instruction> {
+        let shape = shape::Shape::new(layout.0.0, layout.0.1, Color::white(), Variant::Rectangle);
+        vec![Instruction {offset, bound, item: Item::Svg(shape, self.0.clone(), Some(self.1))}]
+    }
 }
 
 impl<D: Drawable> Drawables for D {
     fn drawables(&self) -> Vec<&dyn Drawable> {vec![self]}
     fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {vec![self]}
+    fn listen_all(&mut self) -> ListenFuture<'_, Self> {
+        Box::pin(async move {
+            let callback = self.changed().await;
+            Box::new(move |target: &mut Self, ctx: &mut Context| {
+                callback(target.as_any_mut(), ctx);
+            }) as ListenCallback<Self>
+        })
+    }
+}
+
+pub trait Drawables: 'static {
+    fn drawables(&self) -> Vec<&dyn Drawable>;
+    fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable>;
+    fn listen_all(&mut self) -> ListenFuture<'_, Self>;
 }
 
 impl<D: Drawables> Drawables for Vec<D> {
     fn drawables(&self) -> Vec<&dyn Drawable> {self.iter().flat_map(Drawables::drawables).collect()}
     fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {
         self.iter_mut().flat_map(Drawables::drawables_mut).collect()
+    }
+    fn listen_all(&mut self) -> ListenFuture<'_, Self> {
+        Box::pin(async move {
+            let callback = self.as_mut_slice().listen_all().await;
+            Box::new(move |target: &mut Self, ctx: &mut Context| {
+                callback(target.as_mut_slice(), ctx);
+            }) as ListenCallback<Self>
+        })
     }
 }
 
@@ -304,11 +280,31 @@ impl<D: Drawables> Drawables for [D] {
     fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {
         self.iter_mut().flat_map(Drawables::drawables_mut).collect()
     }
+    fn listen_all(&mut self) -> ListenFuture<'_, Self> {
+        let listeners = self.iter_mut().enumerate().map(|(index, child)| {
+            let next = child.listen_all();
+            Box::pin(async move {
+                let callback = next.await;
+                Box::new(move |target: &mut Self, ctx: &mut Context| {
+                    callback(&mut target[index], ctx);
+                }) as ListenCallback<Self>
+            }) as ListenFuture<'_, Self>
+        }).collect();
+        Box::pin(ChangeHandler::select(listeners))
+    }
 }
 
 impl<D: Drawables, const N: usize> Drawables for [D; N] {
     fn drawables(&self) -> Vec<&dyn Drawable> {self.as_slice().drawables()}
     fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {self.as_mut_slice().drawables_mut()}
+    fn listen_all(&mut self) -> ListenFuture<'_, Self> {
+        Box::pin(async move {
+            let callback = self.as_mut_slice().listen_all().await;
+            Box::new(move |target: &mut Self, ctx: &mut Context| {
+                callback(target.as_mut_slice(), ctx);
+            }) as ListenCallback<Self>
+        })
+    }
 }
 
 impl<D: Drawables> Drawables for Option<D> {
@@ -316,36 +312,142 @@ impl<D: Drawables> Drawables for Option<D> {
     fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {
         self.iter_mut().flat_map(Drawables::drawables_mut).collect()
     }
+    fn listen_all(&mut self) -> ListenFuture<'_, Self> {
+        Box::pin(async move {
+            let Some(child) = self.as_mut() else {return std::future::pending().await};
+            let callback = child.listen_all().await;
+            Box::new(move |target: &mut Self, ctx: &mut Context| {
+                callback(target.as_mut().unwrap(), ctx);
+            }) as ListenCallback<Self>
+        })
+    }
 }
 
-impl<K, D: Drawables, S> Drawables for std::collections::HashMap<K, D, S> {
+impl<K: Clone + Eq + Hash + 'static, D: Drawables, S: BuildHasher + 'static>
+    Drawables for std::collections::HashMap<K, D, S> {
     fn drawables(&self) -> Vec<&dyn Drawable> {self.values().flat_map(Drawables::drawables).collect()}
     fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {
         self.values_mut().flat_map(Drawables::drawables_mut).collect()
     }
+    fn listen_all(&mut self) -> ListenFuture<'_, Self> {
+        let listeners = self.iter_mut().map(|(key, child)| {
+            let key = key.clone();
+            let next = child.listen_all();
+            Box::pin(async move {
+                let callback = next.await;
+                Box::new(move |target: &mut Self, ctx: &mut Context| {
+                    callback(target.get_mut(&key).unwrap(), ctx);
+                }) as ListenCallback<Self>
+            }) as ListenFuture<'_, Self>
+        }).collect();
+        Box::pin(ChangeHandler::select(listeners))
+    }
 }
 
-impl<K, D: Drawables> Drawables for std::collections::BTreeMap<K, D> {
+impl<K: Clone + Ord + 'static, D: Drawables> Drawables for std::collections::BTreeMap<K, D> {
     fn drawables(&self) -> Vec<&dyn Drawable> {self.values().flat_map(Drawables::drawables).collect()}
     fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {
         self.values_mut().flat_map(Drawables::drawables_mut).collect()
     }
+    fn listen_all(&mut self) -> ListenFuture<'_, Self> {
+        let listeners = self.iter_mut().map(|(key, child)| {
+            let key = key.clone();
+            let next = child.listen_all();
+            Box::pin(async move {
+                let callback = next.await;
+                Box::new(move |target: &mut Self, ctx: &mut Context| {
+                    callback(target.get_mut(&key).unwrap(), ctx);
+                }) as ListenCallback<Self>
+            }) as ListenFuture<'_, Self>
+        }).collect();
+        Box::pin(ChangeHandler::select(listeners))
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, PartialOrd)]
+pub struct SizeRange {
+    pub min_width: f32,
+    pub max_width: f32,
+    pub min_height: f32,
+    pub max_height: f32,
+}
+impl SizeRange {
+    pub fn fixed(size: (f32, f32)) -> Self {Self {
+        min_width: size.0, max_width: size.0,
+        min_height: size.1, max_height: size.1,
+    }}
+    pub fn clamp(&self, size: (f32, f32)) -> (f32, f32) {(
+        size.0.clamp(self.min_width, self.max_width),
+        size.1.clamp(self.min_height, self.max_height),
+    )}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shape {
+    pub stroke: f32,
+    pub angle: f32,
+    pub color: Color,
+    pub variant: Variant,
+}
+
+impl Shape {
+    pub fn new(color: Color, variant: Variant) -> Self {Self {stroke: 0.0, angle: 0.0, color, variant}}
+}
+
+#[derive(Debug, Clone)]
+pub struct Text {
+    inner: text::Text,
+    fit: bool,
+}
+
+impl Text {
+    pub fn new(text: &str, font: text::Font, font_size: f32, color: Color, align: text::Align) -> Self {
+        Self {inner: text::Text::new(text, font, font_size, color, align), fit: false}
+    }
+
+    pub fn fit(mut self) -> Self {self.fit = true; self}
+}
+
+impl Deref for Text {
+    type Target = text::Text;
+    fn deref(&self) -> &Self::Target {&self.inner}
+}
+
+impl DerefMut for Text {
+    fn deref_mut(&mut self) -> &mut Self::Target {&mut self.inner}
 }
 
 macro_rules! tuple_drawables {
     () => {};
     ($type:ident:$field:ident $(, $tail:ident:$rest:ident)*) => {
-        impl<$type: Drawables, $($tail: Drawables),*> Drawables for ($type, $($tail,)*) {
-            fn drawables(&self) -> Vec<&dyn Drawable> {
-                let ($field, $($rest,)*) = self;
-                [$field.drawables(), $($rest.drawables()),*].into_iter().flatten().collect()
-            }
-            fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {
-                let ($field, $($rest,)*) = self;
-                [$field.drawables_mut(), $($rest.drawables_mut()),*].into_iter().flatten().collect()
-            }
-        }
+        tuple_drawables!(@impl ($field, $($rest,)*); $type:$field $(, $tail:$rest)*);
         tuple_drawables!($($tail:$rest),*);
     };
+    (@impl $pattern:tt; $($type:ident:$field:ident),+) => {
+        impl<$($type: Drawables),+> Drawables for ($($type,)+) {
+            fn drawables(&self) -> Vec<&dyn Drawable> {
+                let $pattern = self;
+                [$($field.drawables()),+].into_iter().flatten().collect()
+            }
+            fn drawables_mut(&mut self) -> Vec<&mut dyn Drawable> {
+                let $pattern = self;
+                [$($field.drawables_mut()),+].into_iter().flatten().collect()
+            }
+            fn listen_all(&mut self) -> ListenFuture<'_, Self> {
+                let $pattern = self;
+                let listeners: Vec<ListenFuture<'_, Self>> = vec![$({
+                    let next = $field.listen_all();
+                    Box::pin(async move {
+                        let callback = next.await;
+                        Box::new(move |target: &mut Self, ctx: &mut Context| {
+                            let $pattern = target;
+                            callback($field, ctx);
+                        }) as ListenCallback<Self>
+                    })
+                }),+];
+                Box::pin(ChangeHandler::select(listeners))
+            }
+        }
+    };
 }
-tuple_drawables!(A:a, B:b, C:c, D:d, E:e, F:f, G:g, H:h, I:i, J:j, K:k, L:l);
+tuple_drawables!(A:_a, B:_b, C:_c, D:_d, E:_e, F:_f, G:_g, H:_h, I:_i, J:_j, K:_k, L:_l);

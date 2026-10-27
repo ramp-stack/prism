@@ -1,17 +1,11 @@
 extern crate self as prism;
 
-use futures::FutureExt;
-
-use std::io::Read;
-use std::time::Duration;
-
 pub mod drawable;
 use drawable::{Area, Color, Drawable, Instruction, Item, LayoutTree, Size};
 use drawable::shape::{Shape, Variant};
 pub mod events;
 use events::{ChildEvent, DynEvent, Event, Events, WindowEvent};
 pub mod hardware;
-use hardware::{Image, Media, Sound};
 pub mod traits;
 pub mod air;
 pub mod service;
@@ -19,11 +13,11 @@ pub use service::Service;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Window {
-    /// Available size reported by the platform, excluding the docked native keyboard.
+    /// Available size reported by the platform, excluding native keyboard obstruction.
     pub size: Size,
     pub insets: (f32, f32, f32, f32),
-    pub keyboard_visible: bool,
-    pub touch_controls: bool,
+    /// Selects mobile layout and touch-oriented interaction behavior.
+    pub is_mobile: bool,
 }
 impl Window {
     /// The safe area within the available window.
@@ -66,45 +60,26 @@ pub struct Prism {
     context: Context,
 }
 impl Prism {
-    /// Register content constructors when implementing a Prism backend.
-    pub const fn content_backend<I: traits::Image, M: traits::Media>() -> impl inventory::Collect {
-        ContentBackend {
-            read_image: |reader| I::read(reader).map(Image::from),
-            image_from_rgba: |dimensions, pixels| Image::from(I::from_rgba(dimensions, pixels)),
-            media: || Media::from(M::new()),
-            read_media: |reader| M::read(reader).map(Media::from),
-            media_from_sound: |sound| M::try_from(sound).map(Media::from),
-            media_from_image: |image| M::try_from(image).map(Media::from),
-        }
-    }
-
     pub fn new<A: Application, H: traits::Hardware>(hardware: H, air: air::Air, window: Window) -> Self {
         let mut context = Context::new(hardware, air, window);
         let app = Box::new(A::new(&mut context));
-        Self {app, context}
+        let mut prism = Self {app, context};
+        prism.handle_events();
+        prism
     }
 
-    pub fn on_event<E: Event>(&mut self, event: E) {self.context.emit(event);}
-    pub fn resize(&mut self, window: Window) {self.on_event(WindowEvent::Resized(window));}
+    pub fn on_event<E: Event>(&mut self, event: E) {
+        self.context.emit(event);
+        self.handle_events();
+    }
 
     pub async fn changed(&mut self) {
-        if !self.context.events.is_empty() {return}
-        self.app.changed(&mut self.context).await;
+        let callback = self.app.as_mut().changed().await;
+        callback(self.app.as_mut().as_any_mut(), &mut self.context);
+        self.handle_events();
     }
 
     pub fn draw(&mut self) -> Vec<Instruction> {
-        for _ in 0..64 {
-            while let Some(event) = self.context.events.pop_front() {
-                if let Some(WindowEvent::Resized(window)) = event.downcast_ref::<WindowEvent>() {
-                    self.context.window = *window;
-                }
-                let (area, layout) = self.layout();
-                let mut passed: Option<Box<dyn DynEvent>> = None;
-                event.pass_dyn(&mut self.context, &mut [ChildEvent {area: &area, event: &mut passed}]);
-                if let Some(event) = passed {self.app.event(&mut self.context, &layout, event);}
-            }
-            if self.changed().now_or_never().is_none() {break}
-        }
         let (area, layout) = self.layout();
         let bound = (area.offset.0, area.offset.1, area.size.0, area.size.1);
         let mut instructions = Vec::new();
@@ -119,36 +94,26 @@ impl Prism {
         instructions
     }
 
+    fn handle_events(&mut self) {
+        while let Some(event) = self.context.events.pop_front() {
+            if let Some(WindowEvent::Resized(window)) = event.downcast_ref::<WindowEvent>() {
+                self.context.window = *window;
+            }
+            let (area, layout) = self.layout();
+            let mut passed: Option<Box<dyn DynEvent>> = None;
+            event.pass_dyn(&mut self.context, &mut [ChildEvent {area: &area, event: &mut passed}]);
+            if let Some(event) = passed {self.app.event(&mut self.context, &layout, event);}
+        }
+    }
+
     fn layout(&mut self) -> (Area, LayoutTree) {
         let mut area = self.context.window.area();
-        let mut range = self.app.size_range();
-        let mut layout = self.app.layout(area.size, &range);
-        // Settle text wrapping before dispatching input or drawing.
-        for _ in 0..4 {
-            let next = self.app.size_range();
-            if next == range {break}
-            range = next;
-            layout = self.app.layout(area.size, &range);
-        }
+        let (min, max) = self.app.request_width();
+        let width = area.size.0.clamp(min, max);
+        let (min, max) = self.app.request_height(width);
+        let height = area.size.1.clamp(min, max);
+        let layout = self.app.layout((width, height));
         area.size = (area.size.0.min(layout.0.0), area.size.1.min(layout.0.1));
         (area, layout)
-    }
-}
-
-struct ContentBackend {
-    read_image: fn(&mut dyn Read) -> Result<Image, String>,
-    image_from_rgba: fn((u32, u32), Vec<u8>) -> Image,
-    media: fn() -> Media,
-    read_media: fn(&mut dyn traits::Reader) -> Result<Media, String>,
-    media_from_sound: fn(Sound) -> Result<Media, String>,
-    media_from_image: fn((Image, Duration)) -> Result<Media, String>,
-}
-inventory::collect!(ContentBackend);
-impl ContentBackend {
-    fn get() -> &'static Self {
-        let mut backends = inventory::iter::<Self>.into_iter();
-        let backend = backends.next().expect("No Prism content backend registered");
-        assert!(backends.next().is_none(), "Multiple Prism content backends registered");
-        backend
     }
 }

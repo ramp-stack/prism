@@ -20,7 +20,8 @@ pub type Value = Arc<dyn Any + Send + Sync>;
 pub struct ContractType {
     pub id: Id,
     pub location: fn(&air::Secret, &Request) -> air::Location,
-    pub create: fn(air::Secret, air::Location, Option<Request>) -> Box<dyn traits::DynContract>,
+    pub create: fn(&mut air::Air, Request) -> Box<dyn traits::DynContract>,
+    pub receive: fn(air::Secret, air::Location) -> Box<dyn traits::DynContract>,
     pub restore: for<'de> fn(&mut dyn erased_serde::Deserializer<'de>) -> Box<dyn traits::DynContract>,
 }
 impl ContractType {
@@ -30,13 +31,13 @@ impl ContractType {
             location: |secret, init| air::Instance::<C>::generate_location(
                 secret, init.downcast_ref::<C::Init>().unwrap(),
             ).expect("Could not create the Air instance location"),
-            create: |secret, location, init| {
-                let instance: air::Instance<C> = match init {
-                    Some(init) => air::Instance::new(secret, *init.downcast::<C::Init>().unwrap()),
-                    None => air::Instance::receive(secret, location),
-                }.expect("Could not open the Air instance");
-                Box::new(ContractInstance(instance))
-            },
+            create: |air, init| Box::new(ContractInstance(
+                air.create::<C>(*init.downcast::<C::Init>().unwrap())
+                    .expect("Could not create the Air instance"),
+            )),
+            receive: |secret, location| Box::new(ContractInstance::<C>(
+                air::Instance::receive(secret, location).expect("Could not open the Air instance"),
+            )),
             restore: |deserializer| Box::new(ContractInstance::<C>(
                 erased_serde::deserialize(deserializer).expect("Invalid cached Air instance"),
             )),
