@@ -1,6 +1,6 @@
 [package]
 name = "prism2"
-version = "1.0.1"
+version = "2.0.0"
 edition = "2024"
 license = "BSD-3-Clause"
 repository = "https://github.com/ramp-stack/prism.git"
@@ -13,7 +13,7 @@ exclude = ["**/.DS_Store", ".idea/**"]
 anyanymap = "1.0.2"
 downcast-rs = "2.0.2"
 uuid = { version = "1.16.0", features = ["v4", "js"] }
-prism_proc = {version = "1.0.1", path = "prism_proc"}
+prism_proc = {version = "2.0.0", path = "prism_proc"}
 include_dir = "0.7.4"
 nsvg = "0.5.1"
 dyn-clone = "1.0.20"
