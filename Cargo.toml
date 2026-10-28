@@ -1,6 +1,6 @@
 [package]
 name = "prism2"
-version = "3.0.1"
+version = "3.1.0"
 edition = "2024"
 license = "BSD-3-Clause"
 repository = "https://github.com/ramp-stack/prism.git"
@@ -10,20 +10,17 @@ documentation = "https://docs.rs/prism2"
 exclude = ["**/.DS_Store", ".idea/**"]
 
 [dependencies]
-anyanymap = "1.0.2"
 downcast-rs = "2.0.2"
-uuid = { version = "1.16.0", features = ["v4", "js"] }
 prism_proc = {version = "3.0.0", path = "prism_proc"}
-include_dir = "0.7.4"
-media = {package = "media2", version = "0.1.0", path = "../media"}
-wgpu_prism = {version = "8.0.0", path = "../wgpu_prism", default-features = false, features = ["drawable"]}
+media = {package = "media2", version = "0.1.1", path = "../media"}
+wgpu_prism = {version = "8.0.1", path = "../wgpu_prism", default-features = false, features = ["drawable"]}
 dyn-clone = "1.0.20"
 inventory = "0.3"
 futures-timer = "3.0.4"
-futures = "0.3.34"
+futures = {version = "0.3.34", default-features = false, features = ["std"]}
 fastrand = "2"
 
-air = {version = "4.0.0", path = "../air"}
+air = {version = "4.0.1", path = "../air"}
 
 serde = {version = "1", features = ["derive"]}
 

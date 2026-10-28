@@ -17,6 +17,7 @@ use crate::drawable::{Area, Component, Drawable};
 pub type Events = std::collections::VecDeque<Box<dyn DynEvent>>;
 pub type ListenCallback<T = dyn Any> = Box<dyn FnOnce(&mut T, &mut Context)>;
 pub type ListenFuture<'a, T = dyn Any> = LocalBoxFuture<'a, ListenCallback<T>>;
+pub type EventCallback = fn(&mut dyn Any, &mut Context, Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>>;
 
 pub struct ChildEvent<'a, E> {
     pub area: &'a Area,
@@ -189,7 +190,7 @@ macro_rules! events {
 
 pub struct EventHandler {
     pub types: fn() -> (TypeId, TypeId),
-    pub call: fn(&mut dyn Any, &mut Context, Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>>,
+    pub call: EventCallback,
 }
 impl EventHandler {
     pub fn dispatch(target: &mut dyn Any, ctx: &mut Context, event: Box<dyn DynEvent>) -> Vec<Box<dyn DynEvent>> {
